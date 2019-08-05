@@ -113,7 +113,12 @@ use crate::*;
                     )?;
                 }
                 None => {
-                    writeln!(f, "pub type {} = {};\n", ty.id, Type(&ty.extends, ty.id))?;
+                    writeln!(
+                        f,
+                        "pub type {} = {};\n",
+                        ty.id,
+                        Type(&ty.extends, Some(ty.id))
+                    )?;
                 }
             }
         }
@@ -205,7 +210,7 @@ use crate::*;
     }
 }
 
-struct Type<'a>(&'a pdl::Type<'a>, &'a str);
+struct Type<'a>(&'a pdl::Type<'a>, Option<&'a str>);
 
 impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -218,12 +223,14 @@ impl<'a> fmt::Display for Type<'a> {
             pdl::Type::Any => write!(f, "Any"),
             pdl::Type::Binary => write!(f, "Vec<u8>"),
             pdl::Type::Enum(_) => unreachable! {},
-            pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, self.1)),
+            pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, None)),
             pdl::Type::Ref(id) => {
-                if self.1 == *id {
-                    write!(f, "Box<{}>", id.replace('.', "::"))
+                let ref_ty = id.replace('.', "::");
+
+                if self.1 == Some(id) {
+                    write!(f, "Box<{}>", ref_ty)
                 } else {
-                    write!(f, "{}", id.replace('.', "::"))
+                    write!(f, "{}", ref_ty)
                 }
             }
         }
@@ -327,7 +334,7 @@ impl<'a> fmt::Display for Field<'a> {
         let ty = if let pdl::Type::Enum(_) = self.0.ty {
             format!("{}{}", self.1, self.0.name.to_capitalized())
         } else {
-            Type(&self.0.ty, self.1).to_string()
+            Type(&self.0.ty, Some(self.1)).to_string()
         };
 
         if self.0.optional {
