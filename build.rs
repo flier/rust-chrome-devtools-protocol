@@ -77,6 +77,8 @@ struct Mod<'a>(&'a pdl::Domain<'a>);
 
 impl<'a> fmt::Display for Mod<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
         writeln!(
             f,
             r#"#![allow(deprecated, non_snake_case, unused_imports)]
@@ -87,7 +89,7 @@ use crate::*;
 "#
         )?;
 
-        for ty in &self.0.types {
+        for ty in &domain.types {
             write!(f, "{}", Comments(&ty.description))?;
 
             match ty.item {
@@ -123,11 +125,11 @@ use crate::*;
             }
         }
 
-        for cmd in &self.0.commands {
+        for cmd in &domain.commands {
             writeln!(
                 f,
                 "/// The `{}::{}` command.\n{}{}pub type {} = {4}Request;\n",
-                self.0.name,
+                domain.name,
                 cmd.name,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -143,8 +145,23 @@ use crate::*;
             )?;
             writeln!(
                 f,
+                "#[doc(hidden)]\n{}{}pub type {}ReturnObject = {2}Response;\n",
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                if cmd.deprecated {
+                    "#[deprecated]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_capitalized(),
+            )?;
+            writeln!(
+                f,
                 "/// Request parameters to the `{}::{}` command.\n{}{}{}",
-                self.0.name,
+                domain.name,
                 cmd.name,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -164,7 +181,7 @@ use crate::*;
             writeln!(
                 f,
                 "/// Response returns from the `{}::{}` command.\n{}{}{}",
-                self.0.name,
+                domain.name,
                 cmd.name,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -181,13 +198,25 @@ use crate::*;
                     &cmd.returns
                 )
             )?;
+            writeln!(
+                f,
+                r#"impl Method for {}Request {{
+    const NAME: &'static str = "{}.{}";
+
+    type ReturnObject = {0}Response;
+}}
+"#,
+                cmd.name.to_capitalized(),
+                domain.name,
+                cmd.name,
+            )?;
         }
 
-        for evt in &self.0.events {
+        for evt in &domain.events {
             writeln!(
                 f,
                 "/// Event parameters for the `{}::{}` event.\n{}{}{}",
-                self.0.name,
+                domain.name,
                 evt.name,
                 if evt.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -314,30 +343,32 @@ struct Field<'a>(&'a pdl::Param<'a>, &'a str);
 
 impl<'a> fmt::Display for Field<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let param = self.0;
+
         write!(
             f,
             "{}{}{}pub {}: ",
-            Comments(&self.0.description),
-            if self.0.experimental {
+            Comments(&param.description),
+            if param.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
             } else {
                 ""
             },
-            if self.0.deprecated {
+            if param.deprecated {
                 "#[deprecated]\n"
             } else {
                 ""
             },
-            mangle(self.0.name)
+            mangle(param.name)
         )?;
 
-        let ty = if let pdl::Type::Enum(_) = self.0.ty {
-            format!("{}{}", self.1, self.0.name.to_capitalized())
+        let ty = if let pdl::Type::Enum(_) = param.ty {
+            format!("{}{}", self.1, param.name.to_capitalized())
         } else {
-            Type(&self.0.ty, Some(self.1)).to_string()
+            Type(&param.ty, Some(self.1)).to_string()
         };
 
-        if self.0.optional {
+        if param.optional {
             write!(f, "Option<{}>", ty)
         } else {
             write!(f, "{}", ty)
