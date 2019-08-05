@@ -30,7 +30,7 @@ fn gen<P: AsRef<Path>>(path: P) -> Result<(), Error> {
 
     writeln!(
         f,
-        "{}pub const PROTOCOL_VERSION: &str = \"{}.{}\";\n",
+        "{}#[doc(hidden)]\npub const PROTOCOL_VERSION: &str = \"{}.{}\";\n",
         Comments(&pdl.description),
         pdl.version.major,
         pdl.version.minor
