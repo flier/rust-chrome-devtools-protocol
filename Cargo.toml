@@ -1,0 +1,20 @@
+[package]
+name = "chrome_devtools_protocol"
+version = "0.1.0"
+authors = ["Flier Lu <flier.lu@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+failure = "0.1"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+failure = "0.1"
+indented = "0.1"
+pdl = { version = "0.1", path = "../rust-pdl" }
+case = { version = "1.0", git = "https://github.com/flier/case.git", branch = "abbr" }
