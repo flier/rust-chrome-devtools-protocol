@@ -246,12 +246,7 @@ use crate::*;"#
                 r#"
 /// Return object of the `{}::{}` command.
 {}{}pub type {} = {};"#,
-                domain.name,
-                cmd.name,
-                experimental,
-                deprecated,
-                return_object,
-                response
+                domain.name, cmd.name, experimental, deprecated, return_object, response
             )?;
             write!(
                 f,
@@ -283,7 +278,11 @@ use crate::*;"#
 
     type ReturnObject = {};
 }}"#,
-                experimental, cmd.name.to_capitalized(), domain.name, cmd.name, return_object,
+                experimental,
+                cmd.name.to_capitalized(),
+                domain.name,
+                cmd.name,
+                return_object,
             )?;
         }
 
@@ -425,10 +424,11 @@ struct Field<'a>(&'a pdl::Param<'a>, &'a str);
 impl<'a> fmt::Display for Field<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let param = self.0;
+        let mangled_name = mangle(param.name);
 
         write!(
             f,
-            "{}{}{}pub {}: ",
+            "{}{}{}{}pub {}: ",
             Comments(&param.description),
             if param.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
@@ -440,7 +440,12 @@ impl<'a> fmt::Display for Field<'a> {
             } else {
                 ""
             },
-            mangle(param.name)
+            if mangled_name.to_camel_lowercase() != param.name {
+                format!("#[serde(rename = \"{}\")]\n", param.name)
+            } else {
+                "".to_owned()
+            },
+            mangled_name
         )?;
 
         let ty = if let pdl::Type::Enum(_) = param.ty {
