@@ -16,6 +16,8 @@ pub const BROWSER_PROTOCOL_VERSION: &str = browser::PROTOCOL_VERSION;
 /// The current version of `javascript` protocol.
 pub const JS_PROTOCOL_VERSION: &str = js::PROTOCOL_VERSION;
 
+/// Represents a JSON key/value object.
 pub type Object = Map<String, Value>;
 
+/// Represents any valid JSON value.
 pub type Any = Value;
