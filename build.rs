@@ -42,7 +42,7 @@ pub const PROTOCOL_VERSION: &str = "{}.{}";"#,
         pdl.version.minor
     )?;
 
-    for domain in pdl.domains {
+    for domain in &pdl.domains {
         let experimental = if domain.experimental {
             "#[cfg(feature = \"experimental\")]\n"
         } else {
@@ -76,8 +76,39 @@ pub trait {}{} {{
 
                 format!(": {}", dependencies.join(" + "))
             },
-            indented(Trait(&domain))
+            indented(Trait(domain))
         )?;
+
+        if cfg!(feature = "async") {
+            writeln!(
+                f,
+                r#"
+{}{}{}#[allow(deprecated)]
+#[cfg(feature = "async")]
+pub trait Async{}{} {{
+    type Error;
+{}}}"#,
+                Comments(&domain.description),
+                experimental,
+                deprecated,
+                domain.name,
+                if domain.dependencies.is_empty() {
+                    "".to_owned()
+                } else {
+                    let dependencies = std::iter::once(domain.name.to_owned())
+                        .chain(
+                            domain
+                                .dependencies
+                                .iter()
+                                .map(|name| format!("crate::Async{}", name)),
+                        )
+                        .collect::<Vec<_>>();
+
+                    format!(": {}", dependencies.join(" + "))
+                },
+                indented(AsyncTrait(domain))
+            )?;
+        }
 
         writeln!(
             f,
@@ -86,7 +117,7 @@ pub trait {}{} {{
             experimental,
             deprecated,
             domain.name.to_snake(),
-            indented(Mod(&domain))
+            indented(Mod(domain))
         )?;
     }
 
@@ -111,27 +142,10 @@ impl<'a> fmt::Display for Trait<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
 
-        if cfg!(feature = "async") {
-            for cmd in &domain.commands {
-                writeln!(
-                    f,
-                    "{}type {}: Future<Item = {}::{1}Response, Error = <Self as {}>::Error>;",
-                    if cmd.experimental {
-                        "#[cfg(feature = \"experimental\")]\n"
-                    } else {
-                        ""
-                    },
-                    cmd.name.to_capitalized(),
-                    domain.name.to_snake(),
-                    domain.name,
-                )?;
-            }
-        }
-
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> {};",
+                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> Result<{4}::{5}, <Self as {}>::Error>;",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -146,16 +160,55 @@ impl<'a> fmt::Display for Trait<'a> {
                 cmd.name.to_snake(),
                 domain.name.to_snake(),
                 cmd.name.to_capitalized(),
-                if cfg!(feature = "async") {
-                    format!("<Self as {}>::{}", domain.name, cmd.name.to_capitalized())
-                } else {
-                    format!(
-                        "Result<{}::{}, <Self as {}>::Error>",
-                        domain.name.to_snake(),
-                        cmd.name.to_capitalized(),
                         domain.name,
-                    )
-                }
+
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+struct AsyncTrait<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for AsyncTrait<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                "{}type {}: Future<Item = {}::{1}Response, Error = <Self as Async{}>::Error>;",
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_capitalized(),
+                domain.name.to_snake(),
+                domain.name,
+            )?;
+        }
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                "\n{}{}{}fn async_{}(&self, req: {}::{}Request) -> <Self as Async{}>::{5};",
+                Comments(&cmd.description),
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                if cmd.deprecated {
+                    "#[deprecated]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                domain.name.to_snake(),
+                cmd.name.to_capitalized(),
+                domain.name,
             )?;
         }
 
