@@ -353,7 +353,7 @@ impl<'a> fmt::Display for Enum<'a> {
         writeln!(
             f,
             r#"#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum {} {{"#,
             self.0,
         )?;
@@ -372,7 +372,7 @@ impl<'a> fmt::Display for Variant<'a> {
             f,
             "{}{}",
             Comments(&self.0.description),
-            self.0.name.replace('-', "").to_camel()
+            self.0.name.replace('-', "_").to_camel()
         )
     }
 }
