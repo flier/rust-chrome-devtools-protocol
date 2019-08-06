@@ -31,8 +31,7 @@ fn gen<P: AsRef<Path>>(path: P) -> Result<(), Error> {
     writeln!(
         f,
         r#"{}{}#[doc(hidden)]
-pub const PROTOCOL_VERSION: &str = "{}.{}";
-"#,
+pub const PROTOCOL_VERSION: &str = "{}.{}";"#,
         if cfg!(feature = "async") {
             "use futures::Future;\n\n"
         } else {
@@ -57,11 +56,11 @@ pub const PROTOCOL_VERSION: &str = "{}.{}";
 
         writeln!(
             f,
-            r#"{}{}{}#[allow(deprecated)]
+            r#"
+{}{}{}#[allow(deprecated)]
 pub trait {}{} {{
     type Error;
-{}}}
-"#,
+{}}}"#,
             Comments(&domain.description),
             experimental,
             deprecated,
@@ -82,7 +81,7 @@ pub trait {}{} {{
 
         writeln!(
             f,
-            "{}{}{}pub mod {} {{\n{}}}\n",
+            "\n{}{}{}pub mod {} {{\n{}}}",
             Comments(&domain.description),
             experimental,
             deprecated,
@@ -116,7 +115,7 @@ impl<'a> fmt::Display for Trait<'a> {
             for cmd in &domain.commands {
                 writeln!(
                     f,
-                    "{}type {}: Future<Item = {}::{1}Request, Error = <Self as {}>::Error>;",
+                    "{}type {}: Future<Item = {}::{1}Response, Error = <Self as {}>::Error>;",
                     if cmd.experimental {
                         "#[cfg(feature = \"experimental\")]\n"
                     } else {
@@ -176,16 +175,15 @@ impl<'a> fmt::Display for Mod<'a> {
 
 use serde::{{Serialize, Deserialize}};
 
-use crate::*;
-"#
+use crate::*;"#
         )?;
 
         for ty in &domain.types {
-            write!(f, "{}", Comments(&ty.description))?;
+            write!(f, "\n{}", Comments(&ty.description))?;
 
             match ty.item {
                 Some(pdl::Item::Enum(ref variants)) => {
-                    writeln!(
+                    write!(
                         f,
                         "{}{}",
                         if ty.deprecated { "#[deprecated]\n" } else { "" },
@@ -193,7 +191,7 @@ use crate::*;
                     )?;
                 }
                 Some(pdl::Item::Properties(ref props)) => {
-                    writeln!(
+                    write!(
                         f,
                         "{}{}{}",
                         if ty.experimental {
@@ -208,7 +206,7 @@ use crate::*;
                 None => {
                     writeln!(
                         f,
-                        "pub type {} = {};\n",
+                        "pub type {} = {};",
                         ty.id,
                         Type(&ty.extends, Some(ty.id))
                     )?;
@@ -219,6 +217,7 @@ use crate::*;
         for cmd in &domain.commands {
             let request = format!("{}Request", cmd.name.to_capitalized());
             let response = format!("{}Response", cmd.name.to_capitalized());
+            let return_object = format!("{}ReturnObject", cmd.name.to_capitalized());
             let experimental = if cmd.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
             } else {
@@ -232,10 +231,11 @@ use crate::*;
 
             writeln!(
                 f,
-                r#"#[doc(hidden)]
-#[allow(dead_code)]
-{}{}pub type {} = {};
-"#,
+                r#"
+/// Method parameters of the `{}::{}` command.
+{}{}pub type {} = {};"#,
+                domain.name,
+                cmd.name,
                 experimental,
                 deprecated,
                 cmd.name.to_capitalized(),
@@ -243,47 +243,54 @@ use crate::*;
             )?;
             writeln!(
                 f,
-                r#"#[doc(hidden)]
-#[allow(dead_code)]
-{}{}pub type {}ReturnObject = {};
-"#,
+                r#"
+/// Return object of the `{}::{}` command.
+{}{}pub type {} = {};"#,
+                domain.name,
+                cmd.name,
                 experimental,
                 deprecated,
-                cmd.name.to_capitalized(),
+                return_object,
                 response
             )?;
-            writeln!(
+            write!(
                 f,
-                "{}{}{}{}",
-                Comments(&cmd.description),
+                r#"
+/// Request object of the `{}::{}` command.
+{}{}{}"#,
+                domain.name,
+                cmd.name,
                 experimental,
                 deprecated,
                 Struct(&request, &cmd.parameters)
             )?;
-            writeln!(
+            write!(
                 f,
-                "{}{}{}{}",
-                Comments(&cmd.description),
+                r#"
+/// Response object of the `{}::{}` command.
+{}{}{}"#,
+                domain.name,
+                cmd.name,
                 experimental,
                 deprecated,
                 Struct(&response, &cmd.returns)
             )?;
             writeln!(
                 f,
-                r#"{}impl Method for {} {{
+                r#"
+{}impl Method for {} {{
     const NAME: &'static str = "{}.{}";
 
     type ReturnObject = {};
-}}
-"#,
-                experimental, request, domain.name, cmd.name, response,
+}}"#,
+                experimental, cmd.name.to_capitalized(), domain.name, cmd.name, return_object,
             )?;
         }
 
         for evt in &domain.events {
             writeln!(
                 f,
-                "{}{}{}{}",
+                "\n{}{}{}{}",
                 Comments(&evt.description),
                 if evt.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
