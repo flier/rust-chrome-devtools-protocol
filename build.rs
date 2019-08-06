@@ -30,30 +30,63 @@ fn gen<P: AsRef<Path>>(path: P) -> Result<(), Error> {
 
     writeln!(
         f,
-        "{}#[doc(hidden)]\npub const PROTOCOL_VERSION: &str = \"{}.{}\";\n",
+        r#"{}{}#[doc(hidden)]
+pub const PROTOCOL_VERSION: &str = "{}.{}";
+"#,
+        if cfg!(feature = "async") {
+            "use futures::Future;\n\n"
+        } else {
+            ""
+        },
         Comments(&pdl.description),
         pdl.version.major,
         pdl.version.minor
     )?;
 
     for domain in pdl.domains {
+        let experimental = if domain.experimental {
+            "#[cfg(feature = \"experimental\")]\n"
+        } else {
+            ""
+        };
+        let deprecated = if domain.deprecated {
+            "#[deprecated]\n"
+        } else {
+            ""
+        };
+
         writeln!(
             f,
-            r#"{}{}{}pub mod {} {{
+            r#"{}{}{}#[allow(deprecated)]
+pub trait {}{} {{
+    type Error;
 {}}}
 "#,
             Comments(&domain.description),
-            if domain.experimental {
-                "#[cfg(feature = \"experimental\")]\n"
-            } else {
-                ""
-            },
-            if domain.deprecated {
-                "#[deprecated]\n"
-            } else {
-                ""
-            },
+            experimental,
+            deprecated,
             domain.name,
+            if domain.dependencies.is_empty() {
+                "".to_owned()
+            } else {
+                let dependencies = domain
+                    .dependencies
+                    .iter()
+                    .map(|name| format!("crate::{}", name))
+                    .collect::<Vec<_>>();
+
+                format!(": {}", dependencies.join(" + "))
+            },
+            indented(Trait(&domain))
+        )?;
+
+        writeln!(
+            f,
+            "{}{}{}pub mod {} {{\n{}}}\n",
+            Comments(&domain.description),
+            experimental,
+            deprecated,
+            domain.name.to_snake(),
             indented(Mod(&domain))
         )?;
     }
@@ -67,6 +100,64 @@ impl<'a> fmt::Display for Comments<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for comment in self.0.iter() {
             writeln!(f, "/// {}", comment)?;
+        }
+
+        Ok(())
+    }
+}
+
+struct Trait<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for Trait<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        if cfg!(feature = "async") {
+            for cmd in &domain.commands {
+                writeln!(
+                    f,
+                    "{}type {}: Future<Item = {}::{1}Request, Error = <Self as {}>::Error>;",
+                    if cmd.experimental {
+                        "#[cfg(feature = \"experimental\")]\n"
+                    } else {
+                        ""
+                    },
+                    cmd.name.to_capitalized(),
+                    domain.name.to_snake(),
+                    domain.name,
+                )?;
+            }
+        }
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> {};",
+                Comments(&cmd.description),
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                if cmd.deprecated {
+                    "#[deprecated]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                domain.name.to_snake(),
+                cmd.name.to_capitalized(),
+                if cfg!(feature = "async") {
+                    format!("<Self as {}>::{}", domain.name, cmd.name.to_capitalized())
+                } else {
+                    format!(
+                        "Result<{}::{}, <Self as {}>::Error>",
+                        domain.name.to_snake(),
+                        cmd.name.to_capitalized(),
+                        domain.name,
+                    )
+                }
+            )?;
         }
 
         Ok(())
@@ -126,98 +217,74 @@ use crate::*;
         }
 
         for cmd in &domain.commands {
+            let request = format!("{}Request", cmd.name.to_capitalized());
+            let response = format!("{}Response", cmd.name.to_capitalized());
+            let experimental = if cmd.experimental {
+                "#[cfg(feature = \"experimental\")]\n"
+            } else {
+                ""
+            };
+            let deprecated = if cmd.deprecated {
+                "#[deprecated]\n"
+            } else {
+                ""
+            };
+
             writeln!(
                 f,
-                "/// The `{}::{}` command.\n{}{}pub type {} = {4}Request;\n",
-                domain.name,
-                cmd.name,
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                if cmd.deprecated {
-                    "#[deprecated]\n"
-                } else {
-                    ""
-                },
+                r#"#[doc(hidden)]
+#[allow(dead_code)]
+{}{}pub type {} = {};
+"#,
+                experimental,
+                deprecated,
                 cmd.name.to_capitalized(),
+                request
             )?;
             writeln!(
                 f,
-                "#[doc(hidden)]\n{}{}pub type {}ReturnObject = {2}Response;\n",
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                if cmd.deprecated {
-                    "#[deprecated]\n"
-                } else {
-                    ""
-                },
+                r#"#[doc(hidden)]
+#[allow(dead_code)]
+{}{}pub type {}ReturnObject = {};
+"#,
+                experimental,
+                deprecated,
                 cmd.name.to_capitalized(),
+                response
             )?;
             writeln!(
                 f,
-                "/// Request parameters to the `{}::{}` command.\n{}{}{}",
-                domain.name,
-                cmd.name,
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                if cmd.deprecated {
-                    "#[deprecated]\n"
-                } else {
-                    ""
-                },
-                Struct(
-                    &format!("{}Request", cmd.name.to_capitalized()),
-                    &cmd.parameters
-                )
+                "{}{}{}{}",
+                Comments(&cmd.description),
+                experimental,
+                deprecated,
+                Struct(&request, &cmd.parameters)
             )?;
             writeln!(
                 f,
-                "/// Response returns from the `{}::{}` command.\n{}{}{}",
-                domain.name,
-                cmd.name,
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                if cmd.deprecated {
-                    "#[deprecated]\n"
-                } else {
-                    ""
-                },
-                Struct(
-                    &format!("{}Response", cmd.name.to_capitalized()),
-                    &cmd.returns
-                )
+                "{}{}{}{}",
+                Comments(&cmd.description),
+                experimental,
+                deprecated,
+                Struct(&response, &cmd.returns)
             )?;
             writeln!(
                 f,
-                r#"impl Method for {}Request {{
+                r#"{}impl Method for {} {{
     const NAME: &'static str = "{}.{}";
 
-    type ReturnObject = {0}Response;
+    type ReturnObject = {};
 }}
 "#,
-                cmd.name.to_capitalized(),
-                domain.name,
-                cmd.name,
+                experimental, request, domain.name, cmd.name, response,
             )?;
         }
 
         for evt in &domain.events {
             writeln!(
                 f,
-                "/// Event parameters for the `{}::{}` event.\n{}{}{}",
-                domain.name,
-                evt.name,
+                "{}{}{}{}",
+                Comments(&evt.description),
                 if evt.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
@@ -254,7 +321,14 @@ impl<'a> fmt::Display for Type<'a> {
             pdl::Type::Enum(_) => unreachable! {},
             pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, None)),
             pdl::Type::Ref(id) => {
-                let ref_ty = id.replace('.', "::");
+                let parts = id.split('.').collect::<Vec<_>>();
+                let (last, parts) = parts.split_last().unwrap();
+                let ref_ty = parts
+                    .iter()
+                    .map(|s| s.to_snake())
+                    .chain(std::iter::once(last.to_string()))
+                    .collect::<Vec<_>>()
+                    .join("::");
 
                 if self.1 == Some(id) {
                     write!(f, "Box<{}>", ref_ty)
