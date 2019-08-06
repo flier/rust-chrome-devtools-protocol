@@ -1,40 +1,36 @@
-use std::fmt;
-
 use serde::{de::DeserializeOwned, Serialize};
 
 pub type CallId = usize;
 
 #[derive(Serialize, Debug)]
-pub struct MethodCall<T>
-where
-    T: fmt::Debug,
-{
+pub struct Call<T> {
+    pub id: CallId,
     #[serde(rename = "method")]
     method_name: &'static str,
-    pub id: CallId,
     params: T,
 }
 
-impl<T> MethodCall<T>
-where
-    T: fmt::Debug,
-{
-    pub fn get_params(&self) -> &T {
+impl<T> Call<T> {
+    pub fn name(&self) -> &'static str {
+        self.method_name
+    }
+
+    pub fn params(&self) -> &T {
         &self.params
     }
 }
 
-pub trait Method: fmt::Debug {
+pub trait Method {
     const NAME: &'static str;
 
-    type ReturnObject: DeserializeOwned + fmt::Debug;
+    type ReturnObject: DeserializeOwned;
 
-    fn into_method_call(self, call_id: CallId) -> MethodCall<Self>
+    fn call(self, id: CallId) -> Call<Self>
     where
         Self: Sized,
     {
-        MethodCall {
-            id: call_id,
+        Call {
+            id,
             params: self,
             method_name: Self::NAME,
         }
