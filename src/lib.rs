@@ -9,15 +9,13 @@ pub use call::*;
 #[doc(inline)]
 pub use js::*;
 
-use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 /// The current version of `browser` protocol.
 pub const BROWSER_PROTOCOL_VERSION: &str = browser::PROTOCOL_VERSION;
 /// The current version of `javascript` protocol.
 pub const JS_PROTOCOL_VERSION: &str = js::PROTOCOL_VERSION;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Object;
+pub type Object = Map<String, Value>;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Any;
+pub type Any = Value;
