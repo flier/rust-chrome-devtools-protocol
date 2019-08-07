@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate log;
-
 use std::thread;
 
 use chrome_devtools_protocol::{CallId, CallSite, Method};
@@ -86,10 +83,7 @@ impl CallSite for Endpoint {
 }
 
 fn main() -> Result<(), Error> {
-    pretty_env_logger::init();
-
     let opt = Opt::from_args();
-    debug!("opt: {:?}", opt);
 
     let mut uri = Url::parse(&opt.target.unwrap_or(DEFAULT_TARGET.to_owned()))?;
 
@@ -98,18 +92,12 @@ fn main() -> Result<(), Error> {
         "http" => {
             uri.set_path("/json/version");
 
-            debug!("get json version @ {}", uri);
-
             let version: Version = reqwest::get(uri.as_str())?.json()?;
-
-            debug!("res: {:#?}", version);
 
             Url::parse(&version.websocket_debugger_url)?
         }
         scheme @ _ => bail!("unsupport scheme: {}", scheme),
     };
-
-    debug!("connect Chrome devtools @ {}", ws_uri);
 
     let client = websocket::ClientBuilder::new(ws_uri.as_str())?.connect_insecure()?;
     let endpoint = Endpoint::new(client)?;

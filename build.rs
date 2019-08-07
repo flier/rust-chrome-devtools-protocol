@@ -57,13 +57,15 @@ pub const PROTOCOL_VERSION: &str = "{}.{}";"#,
         writeln!(
             f,
             r#"
-{}{}{}#[allow(deprecated)]
+{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
+#[allow(deprecated)]
 pub trait {}{} {{
     type Error;
 {}}}"#,
             Comments(&domain.description),
             experimental,
             deprecated,
+            domain.name.to_snake(),
             domain.name,
             if domain.dependencies.is_empty() {
                 "".to_owned()
@@ -83,14 +85,15 @@ pub trait {}{} {{
             writeln!(
                 f,
                 r#"
-{}{}{}#[allow(deprecated)]
-#[cfg(feature = "async")]
+{}{}{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
+#[allow(deprecated)]
 pub trait Async{}{} {{
     type Error;
 {}}}"#,
                 Comments(&domain.description),
                 experimental,
                 deprecated,
+                domain.name.to_snake(),
                 domain.name,
                 if domain.dependencies.is_empty() {
                     "".to_owned()
@@ -112,7 +115,10 @@ pub trait Async{}{} {{
 
         writeln!(
             f,
-            "\n{}{}{}pub mod {} {{\n{}}}",
+            r#"
+{}{}{}#[cfg(any(feature = "all", feature = "{3}"))]
+pub mod {} {{
+    {}}}"#,
             Comments(&domain.description),
             experimental,
             deprecated,

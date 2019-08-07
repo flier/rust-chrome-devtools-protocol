@@ -7,9 +7,55 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["async", "experimental"]
+default = ["async", "experimental", "all"]
 async = ["futures"]
 experimental = []
+
+all = []
+accessibility = ["dom"]
+animation = ["dom", "runtime"]
+application_cache = []
+audits = ["network"]
+background_service = []
+browser = []
+cache_storage = []
+cast = []
+console = ["runtime"]
+css = ["dom"]
+database = []
+debugger = ["runtime"]
+device_orientation = []
+dom = ["runtime"]
+dom_debugger = ["dom", "debugger", "runtime"]
+dom_snapshot = ["css", "dom", "dom_debugger", "page"]
+dom_storage = []
+emulation = ["dom", "page", "runtime"]
+fetch = ["network", "io", "page"]
+headless_experimental = ["page", "runtime"]
+heap_profiler = ["runtime"]
+indexed_db = ["runtime"]
+input = []
+inspector = []
+io = []
+layer_tree = ["dom"]
+log = ["runtime", "network"]
+memory = []
+network = ["debugger", "runtime", "security"]
+overlay = ["dom", "page", "runtime"]
+page = ["debugger", "dom", "io", "network", "runtime"]
+performance = []
+profiler = ["runtime", "debugger"]
+runtime = []
+schema = []
+security = []
+service_worker = []
+storage  = []
+system_info = []
+target = []
+tethering = []
+tracing = ["io"]
+web_audio = []
+web_authn = []
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -18,8 +64,6 @@ serde_json = "1.0"
 futures = { version = "0.1", optional = true }
 
 [dev-dependencies]
-log = "0.4"
-pretty_env_logger = "0.3"
 failure = "0.1"
 structopt = "0.2"
 url = "2.1"
