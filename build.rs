@@ -8,86 +8,63 @@ use case::CaseExt;
 use failure::{bail, err_msg, Error};
 use indented::indented;
 
-fn gen<P: AsRef<Path>>(path: P) -> Result<(), Error> {
-    println!("cargo:rerun-if-changed={:?}", path.as_ref());
-
+fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
     let out_dir = env::var("OUT_DIR").unwrap();
-    let dest_path = Path::new(&out_dir)
-        .join(path.as_ref().file_name().unwrap())
-        .with_extension("rs");
-
-    let mut f = File::open(path)?;
-    let mut s = String::new();
-    f.read_to_string(&mut s)?;
-
-    let (rest, pdl) = pdl::parse(&s).map_err(|_| err_msg("fail to parse PDL"))?;
-
-    if !rest.is_empty() {
-        bail!("unexpected: {}", rest)
-    }
+    let dest_path = Path::new(&out_dir).join("protocol.rs");
 
     let mut f = File::create(dest_path)?;
 
-    writeln!(
-        f,
-        r#"{}{}#[doc(hidden)]
-pub const PROTOCOL_VERSION: &str = "{}.{}";"#,
-        if cfg!(feature = "async") {
-            "use futures::Future;\n\n"
-        } else {
-            ""
-        },
-        Comments(&pdl.description),
-        pdl.version.major,
-        pdl.version.minor
-    )?;
+    if cfg!(feature = "async") {
+        writeln!(f, "use futures::Future;\n")?;
+    }
 
-    for domain in &pdl.domains {
-        let experimental = if domain.experimental {
-            "#[cfg(feature = \"experimental\")]\n"
-        } else {
-            ""
+    for path in pathes {
+        println!("cargo:rerun-if-changed={:?}", path.as_ref());
+
+        let s = {
+            let mut f = File::open(path)?;
+            let mut s = String::new();
+            f.read_to_string(&mut s)?;
+            s
         };
-        let deprecated = if domain.deprecated {
-            "#[deprecated]\n"
-        } else {
-            ""
-        };
+        let (rest, pdl) = pdl::parse(&s).map_err(|_| err_msg("fail to parse PDL"))?;
+
+        if !rest.is_empty() {
+            bail!("unexpected: {}", rest)
+        }
 
         writeln!(
             f,
-            r#"
-{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
-#[allow(deprecated)]
-pub trait {}{} {{
-    type Error;
-{}}}"#,
-            Comments(&domain.description),
-            experimental,
-            deprecated,
-            domain.name.to_snake(),
-            domain.name,
-            if domain.dependencies.is_empty() {
-                "".to_owned()
-            } else {
-                let dependencies = domain
-                    .dependencies
-                    .iter()
-                    .map(|name| format!("crate::{}", name))
-                    .collect::<Vec<_>>();
-
-                format!(": {}", dependencies.join(" + "))
-            },
-            indented(Trait(domain))
+            r#"{}#[doc(hidden)]
+pub const {}_VERSION: &str = "{}.{}";"#,
+            Comments(&pdl.description),
+            path.as_ref()
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_uppercase(),
+            pdl.version.major,
+            pdl.version.minor
         )?;
 
-        if cfg!(feature = "async") {
+        for domain in &pdl.domains {
+            let experimental = if domain.experimental {
+                "#[cfg(feature = \"experimental\")]\n"
+            } else {
+                ""
+            };
+            let deprecated = if domain.deprecated {
+                "#[deprecated]\n"
+            } else {
+                ""
+            };
+
             writeln!(
                 f,
                 r#"
-{}{}{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
-#[allow(deprecated)]
-pub trait Async{}{} {{
+{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
+pub trait {}{} {{
     type Error;
 {}}}"#,
                 Comments(&domain.description),
@@ -98,33 +75,62 @@ pub trait Async{}{} {{
                 if domain.dependencies.is_empty() {
                     "".to_owned()
                 } else {
-                    let dependencies = std::iter::once(domain.name.to_owned())
-                        .chain(
-                            domain
-                                .dependencies
-                                .iter()
-                                .map(|name| format!("crate::Async{}", name)),
-                        )
+                    let dependencies = domain
+                        .dependencies
+                        .iter()
+                        .map(|name| format!("crate::{}", name))
                         .collect::<Vec<_>>();
 
                     format!(": {}", dependencies.join(" + "))
                 },
-                indented(AsyncTrait(domain))
+                indented(Trait(domain))
+            )?;
+
+            if cfg!(feature = "async") {
+                writeln!(
+                    f,
+                    r#"
+{}{}{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
+pub trait Async{}{} {{
+    type Error;
+{}}}"#,
+                    Comments(&domain.description),
+                    experimental,
+                    deprecated,
+                    domain.name.to_snake(),
+                    domain.name,
+                    if domain.dependencies.is_empty() {
+                        "".to_owned()
+                    } else {
+                        let dependencies = std::iter::once(domain.name.to_owned())
+                            .chain(
+                                domain
+                                    .dependencies
+                                    .iter()
+                                    .map(|name| format!("crate::Async{}", name)),
+                            )
+                            .collect::<Vec<_>>();
+
+                        format!(": {}", dependencies.join(" + "))
+                    },
+                    indented(AsyncTrait(domain))
+                )?;
+            }
+
+            writeln!(
+                f,
+                r#"
+{}{}{}#[cfg(any(feature = "all", feature = "{3}"))]
+#[allow(deprecated)]
+pub mod {} {{
+{}}}"#,
+                Comments(&domain.description),
+                experimental,
+                deprecated,
+                domain.name.to_snake(),
+                indented(Mod(domain))
             )?;
         }
-
-        writeln!(
-            f,
-            r#"
-{}{}{}#[cfg(any(feature = "all", feature = "{3}"))]
-pub mod {} {{
-    {}}}"#,
-            Comments(&domain.description),
-            experimental,
-            deprecated,
-            domain.name.to_snake(),
-            indented(Mod(domain))
-        )?;
     }
 
     Ok(())
@@ -230,9 +236,7 @@ impl<'a> fmt::Display for Mod<'a> {
 
         writeln!(
             f,
-            r#"#![allow(deprecated, non_snake_case, unused_imports)]
-
-use serde::{{Serialize, Deserialize}};
+            r#"use serde::{{Serialize, Deserialize}};
 
 use crate::*;"#
         )?;
@@ -540,8 +544,10 @@ fn mangle(name: &str) -> String {
 }
 
 fn main() -> Result<(), Error> {
-    gen("devtools-protocol/pdl/browser_protocol.pdl")?;
-    gen("devtools-protocol/pdl/js_protocol.pdl")?;
+    gen(&[
+        "devtools-protocol/pdl/browser_protocol.pdl",
+        "devtools-protocol/pdl/js_protocol.pdl",
+    ])?;
 
     Ok(())
 }

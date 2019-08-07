@@ -1,20 +1,16 @@
-mod browser;
+mod protocol {
+    #![allow(deprecated)]
+
+    include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
+}
 mod call;
-mod js;
 
 #[doc(inline)]
-pub use browser::*;
+pub use protocol::*;
 #[doc(inline)]
 pub use call::*;
-#[doc(inline)]
-pub use js::*;
 
 use serde_json::{Map, Value};
-
-/// The current version of `browser` protocol.
-pub const BROWSER_PROTOCOL_VERSION: &str = browser::PROTOCOL_VERSION;
-/// The current version of `javascript` protocol.
-pub const JS_PROTOCOL_VERSION: &str = js::PROTOCOL_VERSION;
 
 /// Represents a JSON key/value object.
 pub type Object = Map<String, Value>;

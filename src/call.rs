@@ -20,13 +20,17 @@ pub trait AsyncCallSite {
 
 #[derive(Serialize, Debug)]
 pub struct Call<T> {
-    pub id: CallId,
+    id: CallId,
     #[serde(rename = "method")]
     method_name: &'static str,
     params: T,
 }
 
 impl<T> Call<T> {
+    pub fn id(&self) -> CallId {
+        self.id
+    }
+
     pub fn name(&self) -> &'static str {
         self.method_name
     }
