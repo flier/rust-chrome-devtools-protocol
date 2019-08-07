@@ -199,7 +199,7 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn async_{}(&self, req: {}::{}Request) -> <Self as Async{}>::{5};",
+                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> <Self as Async{}>::{5};",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
