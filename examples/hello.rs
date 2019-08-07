@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::{
-    mpsc::{channel, Sender},
+    mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
 };
 use std::thread;
 
-use chrome_devtools_protocol::{CallId, CallSite, Message, Method};
-use failure::{bail, Error};
+use chrome_devtools_protocol::{CallId, CallSite, Event, Message, Method, Response};
+use failure::{bail, format_err, Error};
 use serde::Deserialize;
 use structopt::StructOpt;
 use url::Url;
@@ -41,37 +41,67 @@ struct Version {
     websocket_debugger_url: String,
 }
 
+type RequestQueue = Arc<Mutex<HashMap<CallId, Sender<Response>>>>;
+type EventQueue = Receiver<Event>;
+
 struct Endpoint {
-    sender: Writer<TcpStream>,
     call_id: CallId,
-    pending: Arc<Mutex<HashMap<CallId, Sender<Message>>>>,
+    sender: Writer<TcpStream>,
+    requests: Arc<Mutex<HashMap<CallId, Sender<Response>>>>,
+    events: EventQueue,
 }
 
 impl Endpoint {
     pub fn new(client: Client<TcpStream>) -> Result<Self, Error> {
         let (mut receiver, sender) = client.split()?;
-        let pending = Arc::new(Mutex::new(HashMap::new()));
 
-        thread::spawn(move || {
-            for msg in receiver.incoming_messages() {
-                match msg {
-                    Ok(OwnedMessage::Text(text)) => {}
-                    Ok(OwnedMessage::Close(close)) | Err(err) => {
-                        break;
-                    }
-                    _ => {
-                        // ignore message
-                    }
+        let (event_queue, events) = channel();
+        let requests = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let requests = Arc::clone(&requests);
+
+            thread::spawn(move || {
+                for msg in receiver.incoming_messages() {
+                    dispatch_message(&requests, &event_queue, msg.unwrap()).unwrap()
                 }
-            }
-        });
+            });
+        }
 
         Ok(Endpoint {
-            sender,
             call_id: 0,
-            pending,
+            sender,
+            requests,
+            events,
         })
     }
+
+    pub fn events(&self) -> &EventQueue {
+        &self.events
+    }
+}
+
+fn dispatch_message(
+    requests: &RequestQueue,
+    events: &Sender<Event>,
+    msg: OwnedMessage,
+) -> Result<(), Error> {
+    match msg {
+        OwnedMessage::Text(text) => match text.parse()? {
+            Message::Event(evt) => events.send(evt)?,
+            Message::Response(res) => {
+                if let Some(sender) = requests.lock().unwrap().remove(&res.call_id) {
+                    sender.send(res)?;
+                }
+            }
+            Message::ConnectionShutdown => bail!("connection shutdown"),
+        },
+        OwnedMessage::Close(close) => bail!("ws channel closed, {:?}", close),
+        _msg => {
+            // ignore message
+        }
+    }
+
+    Ok(())
 }
 
 impl CallSite for Endpoint {
@@ -83,13 +113,21 @@ impl CallSite for Endpoint {
         let json = serde_json::to_string(&call)?;
         let msg = websocket::Message::text(json);
 
+        let (sender, receiver) = channel();
+        self.requests.lock().unwrap().insert(call.id(), sender);
         self.sender.send_message(&msg)?;
 
-        let (sender, receiver) = channel();
+        let res = receiver.recv()?;
 
-        self.pending.lock()?.insert(call.id(), sender);
+        if let Some(err) = res.error {
+            bail!("remote error {}, {}", err.code, err.message);
+        }
 
-        receiver.recv()?.try_into()
+        let result = res
+            .result
+            .ok_or_else(|| format_err!("empty response when call: {}", T::NAME))?;
+
+        Ok(serde_json::from_value(result)?)
     }
 }
 
@@ -112,6 +150,10 @@ fn main() -> Result<(), Error> {
 
     let client = websocket::ClientBuilder::new(ws_uri.as_str())?.connect_insecure()?;
     let endpoint = Endpoint::new(client)?;
+
+    for evt in endpoint.events() {
+        println!("Event: {:?}", evt);
+    }
 
     Ok(())
 }
