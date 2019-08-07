@@ -7,7 +7,7 @@ use std::sync::{
 use std::thread;
 
 use chrome_devtools_protocol::{CallId, CallSite, Event, Message, Method, Response};
-use failure::{bail, format_err, Error};
+use failure::{bail, Error};
 use serde::Deserialize;
 use structopt::StructOpt;
 use url::Url;
@@ -114,20 +114,11 @@ impl CallSite for Endpoint {
         let msg = websocket::Message::text(json);
 
         let (sender, receiver) = channel();
+
         self.requests.lock().unwrap().insert(call.id(), sender);
         self.sender.send_message(&msg)?;
 
-        let res = receiver.recv()?;
-
-        if let Some(err) = res.error {
-            bail!("remote error {}, {}", err.code, err.message);
-        }
-
-        let result = res
-            .result
-            .ok_or_else(|| format_err!("empty response when call: {}", T::NAME))?;
-
-        Ok(serde_json::from_value(result)?)
+        receiver.recv()?.into_result()
     }
 }
 
