@@ -1,5 +1,5 @@
-mod protocol;
 mod call;
+mod protocol;
 
 #[doc(inline)]
 pub use call::*;

@@ -141,14 +141,27 @@ pub mod {} {{
                 indented(Mod(domain))
             )?;
 
-            if !domain.events.is_empty() {
+            for evt in &domain.events {
                 events.push(format!(
-                    r#"{}{}#[cfg(any(feature = "all", feature = "{}"))]
-{}({2}::Event),"#,
-                    experimental,
-                    deprecated,
+                    r#"{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
+#[serde(rename = "{}.{}")]
+{}{}({3}::{6}Event),"#,
+                    Comments(&evt.description),
+                    if evt.experimental {
+                        "#[cfg(feature = \"experimental\")]\n"
+                    } else {
+                        ""
+                    },
+                    if evt.deprecated {
+                        "#[deprecated]\n"
+                    } else {
+                        ""
+                    },
                     domain.name.to_snake(),
+                    domain.name,
+                    evt.name,
                     domain.name.to_capitalized(),
+                    evt.name.to_capitalized()
                 ));
             }
         }
@@ -158,13 +171,13 @@ pub mod {} {{
         f,
         r#"
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(tag = "method")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
 {}
 }}
 "#,
-        indented(events.join("\n"))
+        indented(events.join("\n\n"))
     )?;
 
     Ok(())
