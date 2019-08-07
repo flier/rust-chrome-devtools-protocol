@@ -6,9 +6,9 @@ mod protocol {
 mod call;
 
 #[doc(inline)]
-pub use protocol::*;
-#[doc(inline)]
 pub use call::*;
+#[doc(inline)]
+pub use protocol::*;
 
 use serde_json::{Map, Value};
 

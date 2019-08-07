@@ -14,8 +14,18 @@ fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
 
     let mut f = File::create(dest_path)?;
 
+    let mut events = vec![];
+
+    writeln!(f, "use serde::{{Serialize, Deserialize}};")?;
+
     if cfg!(feature = "async") {
-        writeln!(f, "use futures::Future;\n")?;
+        writeln!(
+            f,
+            r#"
+#[cfg(feature = "async")]
+use futures::{{Future, Stream}};
+"#
+        )?;
     }
 
     for path in pathes {
@@ -130,8 +140,32 @@ pub mod {} {{
                 domain.name.to_snake(),
                 indented(Mod(domain))
             )?;
+
+            if !domain.events.is_empty() {
+                events.push(format!(
+                    r#"{}{}#[cfg(any(feature = "all", feature = "{}"))]
+{}({2}::Event),"#,
+                    experimental,
+                    deprecated,
+                    domain.name.to_snake(),
+                    domain.name.to_capitalized(),
+                ));
+            }
         }
     }
+
+    writeln!(
+        f,
+        r#"
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
+pub enum Event {{
+{}
+}}
+"#,
+        indented(events.join("\n"))
+    )?;
 
     Ok(())
 }
@@ -153,6 +187,17 @@ struct Trait<'a>(&'a pdl::Domain<'a>);
 impl<'a> fmt::Display for Trait<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
+
+        if !domain.events.is_empty() {
+            writeln!(
+                f,
+                r#"type Events: Iterator<Item = {}::Event>;
+
+fn events(&self) -> <Self as {}>::Events;"#,
+                domain.name.to_snake(),
+                domain.name
+            )?;
+        }
 
         for cmd in &domain.commands {
             writeln!(
@@ -202,6 +247,17 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
             )?;
         }
 
+        if !domain.events.is_empty() {
+            writeln!(
+                f,
+                r#"type Events: Stream<Item = {}::Event, Error = <Self as Async{}>::Error>;
+
+fn events(&self) -> <Self as Async{1}>::Events;"#,
+                domain.name.to_snake(),
+                domain.name
+            )?;
+        }
+
         for cmd in &domain.commands {
             writeln!(
                 f,
@@ -233,6 +289,7 @@ struct Mod<'a>(&'a pdl::Domain<'a>);
 impl<'a> fmt::Display for Mod<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
+        let mut events = vec![];
 
         writeln!(
             f,
@@ -350,24 +407,52 @@ use crate::*;"#
         }
 
         for evt in &domain.events {
+            let experimental = if evt.experimental {
+                "#[cfg(feature = \"experimental\")]\n"
+            } else {
+                ""
+            };
+            let deprecated = if evt.deprecated {
+                "#[deprecated]\n"
+            } else {
+                ""
+            };
+
             writeln!(
                 f,
-                "\n{}{}{}{}",
+                "{}{}{}{}",
                 Comments(&evt.description),
-                if evt.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                if evt.deprecated {
-                    "#[deprecated]\n"
-                } else {
-                    ""
-                },
+                experimental,
+                deprecated,
                 Struct(
                     &format!("{}Event", evt.name.to_capitalized()),
                     &evt.parameters
                 )
+            )?;
+
+            events.push(format!(
+                r#"{}{}{}#[serde(rename = "{}.{}")]
+{}({}::Event),"#,
+                Comments(&evt.description),
+                experimental,
+                deprecated,
+                domain.name,
+                evt.name,
+                evt.name.to_capitalized(),
+                domain.name.to_snake(),
+            ));
+        }
+
+        if !events.is_empty() {
+            writeln!(
+                f,
+                r#"#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "method")]
+#[allow(clippy::large_enum_variant)]
+pub enum Event {{
+{}
+}}"#,
+                indented(events.join("\n"))
             )?;
         }
 
