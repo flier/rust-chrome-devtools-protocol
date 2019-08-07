@@ -1,6 +1,12 @@
+use std::collections::HashMap;
+use std::convert::TryInto;
+use std::sync::{
+    mpsc::{channel, Sender},
+    Arc, Mutex,
+};
 use std::thread;
 
-use chrome_devtools_protocol::{CallId, CallSite, Method};
+use chrome_devtools_protocol::{CallId, CallSite, Message, Method};
 use failure::{bail, Error};
 use serde::Deserialize;
 use structopt::StructOpt;
@@ -38,32 +44,33 @@ struct Version {
 struct Endpoint {
     sender: Writer<TcpStream>,
     call_id: CallId,
+    pending: Arc<Mutex<HashMap<CallId, Sender<Message>>>>,
 }
 
 impl Endpoint {
     pub fn new(client: Client<TcpStream>) -> Result<Self, Error> {
         let (mut receiver, sender) = client.split()?;
+        let pending = Arc::new(Mutex::new(HashMap::new()));
 
         thread::spawn(move || {
             for msg in receiver.incoming_messages() {
                 match msg {
                     Ok(OwnedMessage::Text(text)) => {}
-                    Ok(OwnedMessage::Close(close)) => {
-                        debug!("ws channle is closing, {:?}", close);
+                    Ok(OwnedMessage::Close(close)) | Err(err) => {
                         break;
                     }
-                    Ok(msg) => {
-                        trace!("ignore message: {:?}", msg);
-                    }
-                    Err(err) => {
-                        warn!("fail to receive message: {}", err);
-                        break;
+                    _ => {
+                        // ignore message
                     }
                 }
             }
         });
 
-        Ok(Endpoint { sender, call_id: 0 })
+        Ok(Endpoint {
+            sender,
+            call_id: 0,
+            pending,
+        })
     }
 }
 
@@ -78,7 +85,11 @@ impl CallSite for Endpoint {
 
         self.sender.send_message(&msg)?;
 
-        unreachable!()
+        let (sender, receiver) = channel();
+
+        self.pending.lock()?.insert(call.id(), sender);
+
+        receiver.recv()?.try_into()
     }
 }
 
