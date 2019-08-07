@@ -432,14 +432,14 @@ use crate::*;"#
 
             events.push(format!(
                 r#"{}{}{}#[serde(rename = "{}.{}")]
-{}({}::Event),"#,
+{}({5}Event),
+"#,
                 Comments(&evt.description),
                 experimental,
                 deprecated,
                 domain.name,
                 evt.name,
                 evt.name.to_capitalized(),
-                domain.name.to_snake(),
             ));
         }
 

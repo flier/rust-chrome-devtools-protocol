@@ -1,8 +1,4 @@
-mod protocol {
-    #![allow(deprecated)]
-
-    include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
-}
+mod protocol;
 mod call;
 
 #[doc(inline)]
