@@ -2,6 +2,22 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub type CallId = usize;
 
+pub trait CallSite {
+    type Error;
+
+    fn call<T: Method>(&mut self, method: T) -> Result<T::ReturnObject, Self::Error>;
+}
+
+#[cfg(feature = "async")]
+pub trait AsyncCallSite {
+    type Error;
+
+    fn async_call<T: Method>(
+        &mut self,
+        method: T,
+    ) -> futures::Future<Item = T::ReturnObject, Error = Self::Error>;
+}
+
 #[derive(Serialize, Debug)]
 pub struct Call<T> {
     pub id: CallId,
@@ -20,12 +36,12 @@ impl<T> Call<T> {
     }
 }
 
-pub trait Method {
+pub trait Method: Serialize {
     const NAME: &'static str;
 
     type ReturnObject: DeserializeOwned;
 
-    fn call(self, id: CallId) -> Call<Self>
+    fn to_method_call(self, id: CallId) -> Call<Self>
     where
         Self: Sized,
     {
