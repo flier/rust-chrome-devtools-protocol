@@ -145,7 +145,7 @@ pub mod {} {{
                 events.push(format!(
                     r#"{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
 #[serde(rename = "{}.{}")]
-{}{}({3}::{6}Event),"#,
+{}{}({3}::{7}Event),"#,
                     Comments(&evt.description),
                     if evt.experimental {
                         "#[cfg(feature = \"experimental\")]\n"
