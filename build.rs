@@ -438,7 +438,7 @@ impl<'a> fmt::Display for Call<'a> {
                         ".map(|res| ({}))",
                         cmd.returns
                             .iter()
-                            .map(|param| format!("res.{}", param.name))
+                            .map(|param| format!("res.{}", param.name.to_snake()))
                             .collect::<Vec<_>>()
                             .join(", ")
                     )
@@ -512,7 +512,7 @@ impl<'a> fmt::Display for AsyncCall<'a> {
                         ".map(|res| ({})))",
                         cmd.returns
                             .iter()
-                            .map(|param| format!("res.{}", param.name))
+                            .map(|param| format!("res.{}", param.name.to_snake()))
                             .collect::<Vec<_>>()
                             .join(", ")
                     )
