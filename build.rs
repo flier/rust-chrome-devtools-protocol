@@ -589,7 +589,7 @@ impl<'a> fmt::Display for Field<'a> {
 
         write!(
             f,
-            "{}{}{}{}{}pub {}: ",
+            "{}{}{}{}pub {}: ",
             Comments(&param.description),
             if param.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
@@ -605,13 +605,6 @@ impl<'a> fmt::Display for Field<'a> {
                 format!("#[serde(rename = \"{}\")]\n", param.name)
             } else {
                 "".to_owned()
-            },
-            if param.ty == pdl::Type::Binary {
-                r#"#[serde(serialize_with = "crate::protocol::serialize_binary")]
-#[serde(deserialize_with = "crate::protocol::deserialize_binary")]
-"#
-            } else {
-                ""
             },
             mangled_name
         )?;
