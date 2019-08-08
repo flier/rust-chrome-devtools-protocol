@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::{
+    atomic::{AtomicUsize, Ordering},
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex,
 };
 use std::thread;
 
-use chrome_devtools_protocol::{CallId, CallSite, Event, Message, Method, Response};
+use chrome_devtools_protocol::{
+    browser::GetVersion, Browser, CallId, CallSite, Event, Message, Method, Response, Version,
+};
 use failure::{bail, Error};
-use serde::Deserialize;
 use structopt::StructOpt;
 use url::Url;
 use websocket::{
@@ -25,27 +27,11 @@ struct Opt {
     target: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
-struct Version {
-    #[serde(rename = "Browser")]
-    browser: String,
-    #[serde(rename = "Protocol-Version")]
-    protocol_version: String,
-    #[serde(rename = "User-Agent")]
-    user_agent: String,
-    #[serde(rename = "V8-Version")]
-    v8_version: String,
-    #[serde(rename = "WebKit-Version")]
-    webkit_version: String,
-    #[serde(rename = "webSocketDebuggerUrl")]
-    websocket_debugger_url: String,
-}
-
 type RequestQueue = Arc<Mutex<HashMap<CallId, Sender<Response>>>>;
 type EventQueue = Receiver<Event>;
 
 struct Endpoint {
-    call_id: CallId,
+    call_id: AtomicUsize,
     sender: Writer<TcpStream>,
     requests: Arc<Mutex<HashMap<CallId, Sender<Response>>>>,
     events: EventQueue,
@@ -68,7 +54,7 @@ impl Endpoint {
         }
 
         Ok(Endpoint {
-            call_id: 0,
+            call_id: AtomicUsize::new(0),
             sender,
             requests,
             events,
@@ -108,8 +94,7 @@ impl CallSite for Endpoint {
     type Error = Error;
 
     fn call<T: Method>(&mut self, method: T) -> Result<T::ReturnObject, Self::Error> {
-        self.call_id += 1;
-        let call = method.to_method_call(self.call_id);
+        let call = method.to_method_call(self.call_id.fetch_add(1, Ordering::Relaxed));
         let json = serde_json::to_string(&call)?;
         let msg = websocket::Message::text(json);
 
@@ -134,6 +119,8 @@ fn main() -> Result<(), Error> {
 
             let version: Version = reqwest::get(uri.as_str())?.json()?;
 
+            println!("Version: {:#?}", version);
+
             Url::parse(&version.websocket_debugger_url)?
         }
         scheme @ _ => bail!("unsupport scheme: {}", scheme),
@@ -142,9 +129,11 @@ fn main() -> Result<(), Error> {
     let client = websocket::ClientBuilder::new(ws_uri.as_str())?.connect_insecure()?;
     let endpoint = Endpoint::new(client)?;
 
-    for evt in endpoint.events() {
-        println!("Event: {:?}", evt);
-    }
+    let version = endpoint.get_version(GetVersion::default())?;
+    println!(
+        "hello {} {} (V8 {}, devtools {})",
+        version.product, version.revision, version.jsVersion, version.protocol_version
+    );
 
     Ok(())
 }
