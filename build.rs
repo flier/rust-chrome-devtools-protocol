@@ -16,7 +16,12 @@ fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
 
     let mut events = vec![];
 
-    writeln!(f, "use serde::{{Serialize, Deserialize}};")?;
+    writeln!(
+        f,
+        r#"use serde::{{Serialize, Deserialize}};
+
+use crate::CallSite;"#
+    )?;
 
     if cfg!(feature = "async") {
         writeln!(
@@ -85,13 +90,7 @@ pub trait {}{} {{
                 if domain.dependencies.is_empty() {
                     "".to_owned()
                 } else {
-                    let dependencies = domain
-                        .dependencies
-                        .iter()
-                        .map(|name| format!("crate::{}", name))
-                        .collect::<Vec<_>>();
-
-                    format!(": {}", dependencies.join(" + "))
+                    format!(": {}", domain.dependencies.join(" + "))
                 },
                 indented(Trait(domain))
             )?;
@@ -117,7 +116,7 @@ pub trait Async{}{} {{
                                 domain
                                     .dependencies
                                     .iter()
-                                    .map(|name| format!("crate::Async{}", name)),
+                                    .map(|name| format!("Async{}", name)),
                             )
                             .collect::<Vec<_>>();
 
@@ -126,6 +125,19 @@ pub trait Async{}{} {{
                     indented(AsyncTrait(domain))
                 )?;
             }
+
+            writeln!(
+                f,
+                r#"
+{}#[cfg(any(feature = "all", feature = "{}"))]
+impl<T> {} for T where T: CallSite {{
+    type Error = <T as CallSite>::Error;
+{}}}"#,
+                experimental,
+                domain.name.to_snake(),
+                domain.name,
+                indented(Call(domain))
+            )?;
 
             writeln!(
                 f,
@@ -215,7 +227,7 @@ fn events(&self) -> <Self as {}>::Events;"#,
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> Result<{4}::{5}, <Self as {}>::Error>;",
+                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> Result<{4}::{5}Response, <Self as {}>::Error>;",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -283,6 +295,35 @@ fn events(&self) -> <Self as Async{1}>::Events;"#,
                 },
                 if cmd.deprecated {
                     "#[deprecated]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                domain.name.to_snake(),
+                cmd.name.to_capitalized(),
+                domain.name,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+struct Call<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for Call<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                r#"
+{}fn {}(&self, req: {}::{}Request) -> Result<{2}::{3}Response, <Self as {}>::Error> {{
+    CallSite::call(self, req)
+}}"#,
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
                 } else {
                     ""
                 },
