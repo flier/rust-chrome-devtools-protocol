@@ -8,6 +8,22 @@ use case::CaseExt;
 use failure::{bail, err_msg, Error};
 use indented::indented;
 
+const EVENTS: &str = r#"pub trait Events {
+    type Events: Iterator<Item = Event>;
+
+    fn events(&self) -> Self::Events;
+}"#;
+
+const ASYNC_EVENTS: &str = r#"
+#[cfg(feature = "async")]
+pub trait AsyncEvents {
+    type Error;
+    type Events: futures::Stream<Item = Event, Error = Self::Error>;
+
+    fn events(&self) -> Self::Events;
+}
+"#;
+
 fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("protocol.rs");
@@ -20,7 +36,7 @@ fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
         f,
         r#"use serde::{{Serialize, Deserialize}};
 
-use crate::CallSite;"#
+use crate::{{AsyncCallSite, CallSite}};"#
     )?;
 
     if cfg!(feature = "async") {
@@ -28,7 +44,7 @@ use crate::CallSite;"#
             f,
             r#"
 #[cfg(feature = "async")]
-use futures::{{Future, Stream}};
+use futures::Future;
 "#
         )?;
     }
@@ -95,6 +111,19 @@ pub trait {}{} {{
                 indented(Trait(domain))
             )?;
 
+            writeln!(
+                f,
+                r#"
+{}#[cfg(any(feature = "all", feature = "{}"))]
+impl<T> {} for T where T: CallSite {{
+    type Error = <T as CallSite>::Error;
+{}}}"#,
+                experimental,
+                domain.name.to_snake(),
+                domain.name,
+                indented(Call(domain))
+            )?;
+
             if cfg!(feature = "async") {
                 writeln!(
                     f,
@@ -124,20 +153,20 @@ pub trait Async{}{} {{
                     },
                     indented(AsyncTrait(domain))
                 )?;
-            }
 
-            writeln!(
-                f,
-                r#"
-{}#[cfg(any(feature = "all", feature = "{}"))]
-impl<T> {} for T where T: CallSite {{
+                writeln!(
+                    f,
+                    r#"
+{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
+impl<T> Async{} for T where T: AsyncCallSite {{
     type Error = <T as CallSite>::Error;
 {}}}"#,
-                experimental,
-                domain.name.to_snake(),
-                domain.name,
-                indented(Call(domain))
-            )?;
+                    experimental,
+                    domain.name.to_snake(),
+                    domain.name,
+                    indented(AsyncCall(domain))
+                )?;
+            }
 
             writeln!(
                 f,
@@ -182,6 +211,8 @@ pub mod {} {{
     writeln!(
         f,
         r#"
+{}
+{}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 #[allow(clippy::large_enum_variant)]
@@ -189,6 +220,12 @@ pub enum Event {{
 {}
 }}
 "#,
+        EVENTS,
+        if cfg!(feature = "async") {
+            ASYNC_EVENTS
+        } else {
+            ""
+        },
         indented(events.join("\n\n"))
     )?;
 
@@ -213,21 +250,10 @@ impl<'a> fmt::Display for Trait<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
 
-        if !domain.events.is_empty() {
-            writeln!(
-                f,
-                r#"type Events: Iterator<Item = {}::Event>;
-
-fn events(&self) -> <Self as {}>::Events;"#,
-                domain.name.to_snake(),
-                domain.name
-            )?;
-        }
-
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> Result<{4}::{5}Response, <Self as {}>::Error>;",
+                "\n{}{}{}fn {}(&mut self, req: {}::{}Request) -> Result<{4}::{5}Response, <Self as {}>::Error>;",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -272,21 +298,10 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
             )?;
         }
 
-        if !domain.events.is_empty() {
-            writeln!(
-                f,
-                r#"type Events: Stream<Item = {}::Event, Error = <Self as Async{}>::Error>;
-
-fn events(&self) -> <Self as Async{1}>::Events;"#,
-                domain.name.to_snake(),
-                domain.name
-            )?;
-        }
-
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&self, req: {}::{}Request) -> <Self as Async{}>::{5};",
+                "\n{}{}{}fn {}(&mut self, req: {}::{}Request) -> <Self as Async{}>::{5};",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -319,8 +334,51 @@ impl<'a> fmt::Display for Call<'a> {
             writeln!(
                 f,
                 r#"
-{}fn {}(&self, req: {}::{}Request) -> Result<{2}::{3}Response, <Self as {}>::Error> {{
+{}fn {}(&mut self, req: {}::{}Request) -> Result<{2}::{3}Response, <Self as {}>::Error> {{
     CallSite::call(self, req)
+}}"#,
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                domain.name.to_snake(),
+                cmd.name.to_capitalized(),
+                domain.name,
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+struct AsyncCall<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for AsyncCall<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                "{}type {} = Box<dyn Future<Item = {}::{1}Response, Error = <Self as CallSite>::Error>>;",
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_capitalized(),
+                domain.name.to_snake(),
+            )?;
+        }
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                r#"
+{}fn {}(&mut self, req: {}::{}Request) -> <Self as Async{}>::{3} {{
+    AsyncCallSite::async_call(self, req)
 }}"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -486,8 +544,7 @@ use crate::*;"#
 
             events.push(format!(
                 r#"{}{}{}#[serde(rename = "{}.{}")]
-{}({5}Event),
-"#,
+{}({5}Event),"#,
                 Comments(&evt.description),
                 experimental,
                 deprecated,
@@ -500,13 +557,21 @@ use crate::*;"#
         if !events.is_empty() {
             writeln!(
                 f,
-                r#"#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+                r#"{}
+{}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
 {}
 }}"#,
-                indented(events.join("\n"))
+                EVENTS,
+                if cfg!(feature = "async") {
+                    ASYNC_EVENTS
+                } else {
+                    ""
+                },
+                indented(events.join("\n\n"))
             )?;
         }
 

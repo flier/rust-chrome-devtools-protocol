@@ -9,13 +9,11 @@ pub trait CallSite {
 }
 
 #[cfg(feature = "async")]
-pub trait AsyncCallSite {
-    type Error;
-
+pub trait AsyncCallSite: CallSite {
     fn async_call<T: Method>(
         &mut self,
         method: T,
-    ) -> futures::Future<Item = T::ReturnObject, Error = Self::Error>;
+    ) -> Box<dyn futures::Future<Item = T::ReturnObject, Error = <Self as CallSite>::Error>>;
 }
 
 #[derive(Serialize, Debug)]
