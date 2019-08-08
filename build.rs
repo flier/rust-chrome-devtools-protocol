@@ -478,13 +478,13 @@ struct Type<'a>(&'a pdl::Type<'a>, Option<&'a str>);
 impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.0 {
-            pdl::Type::Integer => write!(f, "isize"),
-            pdl::Type::Number => write!(f, "f64"),
-            pdl::Type::Boolean => write!(f, "bool"),
+            pdl::Type::Integer => write!(f, "Integer"),
+            pdl::Type::Number => write!(f, "Number"),
+            pdl::Type::Boolean => write!(f, "Boolean"),
             pdl::Type::String => write!(f, "String"),
             pdl::Type::Object => write!(f, "Object"),
             pdl::Type::Any => write!(f, "Any"),
-            pdl::Type::Binary => write!(f, "Vec<u8>"),
+            pdl::Type::Binary => write!(f, "Binary"),
             pdl::Type::Enum(_) => unreachable! {},
             pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, None)),
             pdl::Type::Ref(id) => {
@@ -589,7 +589,7 @@ impl<'a> fmt::Display for Field<'a> {
 
         write!(
             f,
-            "{}{}{}{}pub {}: ",
+            "{}{}{}{}{}pub {}: ",
             Comments(&param.description),
             if param.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
@@ -605,6 +605,13 @@ impl<'a> fmt::Display for Field<'a> {
                 format!("#[serde(rename = \"{}\")]\n", param.name)
             } else {
                 "".to_owned()
+            },
+            if param.ty == pdl::Type::Binary {
+                r#"#[serde(serialize_with = "crate::protocol::serialize_binary")]
+#[serde(deserialize_with = "crate::protocol::deserialize_binary")]
+"#
+            } else {
+                ""
             },
             mangled_name
         )?;

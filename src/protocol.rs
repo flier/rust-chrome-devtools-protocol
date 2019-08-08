@@ -4,11 +4,41 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::de::DeserializeOwned;
+use serde::{
+    de::{DeserializeOwned, Visitor},
+    Deserializer, Serializer,
+};
 
-use crate::CallId;
+use crate::{Binary, CallId};
 
 include!(concat!(env!("OUT_DIR"), "/protocol.rs"));
+
+fn serialize_binary<S>(data: &Binary, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&base64::encode(&data))
+}
+
+fn deserialize_binary<'de, D>(deserializer: D) -> Result<Binary, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct BinaryVisitor;
+
+    impl<'de> Visitor<'de> for BinaryVisitor {
+        type Value = Binary;
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: Error,
+        {
+            base64::decode(v)
+        }
+    }
+
+    deserializer.deserialize_str(BinaryVisitor)
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
