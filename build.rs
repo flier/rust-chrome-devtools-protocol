@@ -8,6 +8,9 @@ use case::CaseExt;
 use failure::{bail, err_msg, Error};
 use indented::indented;
 
+const MAX_INLINE_PARAMS: usize = 7;
+const MAX_INLINE_RETURNS: usize = 3;
+
 const EVENTS: &str = r#"pub trait Events {
     type Events: Iterator<Item = Event>;
 
@@ -158,7 +161,11 @@ pub trait Async{}{} {{
                     f,
                     r#"
 {}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
-impl<T> Async{} for T where T: AsyncCallSite {{
+impl<T> Async{} for T
+where
+    T: AsyncCallSite,
+    <T as CallSite>::Error: 'static,
+{{
     type Error = <T as CallSite>::Error;
 {}}}"#,
                     experimental,
@@ -253,7 +260,7 @@ impl<'a> fmt::Display for Trait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&mut self, req: {}::{}Request) -> Result<{4}::{5}Response, <Self as {}>::Error>;",
+                "\n{}{}{}fn {}(&mut self{}) -> Result<{}, <Self as {}>::Error>;",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -266,10 +273,9 @@ impl<'a> fmt::Display for Trait<'a> {
                     ""
                 },
                 cmd.name.to_snake(),
-                domain.name.to_snake(),
-                cmd.name.to_capitalized(),
-                        domain.name,
-
+                args(domain, cmd),
+                returns(domain, cmd),
+                domain.name,
             )?;
         }
 
@@ -286,14 +292,14 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "{}type {}: Future<Item = {}::{1}Response, Error = <Self as Async{}>::Error>;",
+                r#"{}type {}: Future<Item = {}, Error = <Self as Async{}>::Error>;"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
                     ""
                 },
                 cmd.name.to_capitalized(),
-                domain.name.to_snake(),
+                returns(domain, cmd),
                 domain.name,
             )?;
         }
@@ -301,7 +307,7 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&mut self, req: {}::{}Request) -> <Self as Async{}>::{5};",
+                "\n{}{}{}fn {}(&mut self{}) -> <Self as Async{}>::{};",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -314,13 +320,80 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
                     ""
                 },
                 cmd.name.to_snake(),
-                domain.name.to_snake(),
-                cmd.name.to_capitalized(),
+                args(domain, cmd),
                 domain.name,
+                cmd.name.to_capitalized(),
             )?;
         }
 
         Ok(())
+    }
+}
+
+fn args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
+    if cmd.parameters.len() <= MAX_INLINE_PARAMS {
+        cmd.parameters
+            .iter()
+            .map(|param| {
+                let mut ty = match param.ty {
+                    pdl::Type::Enum(_) => format!(
+                        "{}::{}Request{}",
+                        domain.name.to_snake(),
+                        cmd.name.to_capitalized(),
+                        param.name.to_capitalized()
+                    ),
+                    _ => Type(&param.ty, None, Some(domain.name)).to_string(),
+                };
+
+                if param.optional {
+                    ty = format!("Option<{}>", ty)
+                }
+
+                format!(", {}: {}", mangle(param.name), ty)
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    } else {
+        format!(
+            ", req: {}::{}Request",
+            domain.name.to_snake(),
+            cmd.name.to_capitalized()
+        )
+    }
+}
+
+fn returns(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
+    if cmd.returns.len() <= MAX_INLINE_RETURNS {
+        format!(
+            "({})",
+            cmd.returns
+                .iter()
+                .map(|param| {
+                    let mut ty = match param.ty {
+                        pdl::Type::Enum(_) => format!(
+                            "{}::{}Response{}",
+                            domain.name.to_snake(),
+                            cmd.name.to_capitalized(),
+                            param.name.to_capitalized()
+                        ),
+                        _ => Type(&param.ty, None, Some(domain.name)).to_string(),
+                    };
+
+                    if param.optional {
+                        ty = format!("Option<{}>", ty)
+                    }
+
+                    ty.to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    } else {
+        format!(
+            "{}::{}Response",
+            domain.name.to_snake(),
+            cmd.name.to_capitalized()
+        )
     }
 }
 
@@ -334,8 +407,8 @@ impl<'a> fmt::Display for Call<'a> {
             writeln!(
                 f,
                 r#"
-{}fn {}(&mut self, req: {}::{}Request) -> Result<{2}::{3}Response, <Self as {}>::Error> {{
-    CallSite::call(self, req)
+{}fn {}(&mut self{}) -> Result<{}, <Self as {}>::Error> {{
+    CallSite::call(self, {}){}
 }}"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -343,9 +416,35 @@ impl<'a> fmt::Display for Call<'a> {
                     ""
                 },
                 cmd.name.to_snake(),
-                domain.name.to_snake(),
-                cmd.name.to_capitalized(),
+                args(domain, cmd),
+                returns(domain, cmd),
                 domain.name,
+                if cmd.parameters.len() <= MAX_INLINE_PARAMS {
+                    format!(
+                        "{}::{}Request {{ {} }}",
+                        domain.name.to_snake(),
+                        cmd.name.to_capitalized(),
+                        cmd.parameters
+                            .iter()
+                            .map(|param| mangle(param.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    "req".to_owned()
+                },
+                if cmd.returns.len() <= MAX_INLINE_RETURNS {
+                    format!(
+                        ".map(|res| ({}))",
+                        cmd.returns
+                            .iter()
+                            .map(|param| format!("res.{}", param.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    "".to_owned()
+                }
             )?;
         }
 
@@ -362,14 +461,14 @@ impl<'a> fmt::Display for AsyncCall<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "{}type {} = Box<dyn Future<Item = {}::{1}Response, Error = <Self as CallSite>::Error>>;",
+                "{}type {} = Box<dyn Future<Item = {}, Error = <Self as CallSite>::Error>>;",
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
                     ""
                 },
                 cmd.name.to_capitalized(),
-                domain.name.to_snake(),
+                returns(domain, cmd),
             )?;
         }
 
@@ -377,8 +476,8 @@ impl<'a> fmt::Display for AsyncCall<'a> {
             writeln!(
                 f,
                 r#"
-{}fn {}(&mut self, req: {}::{}Request) -> <Self as Async{}>::{3} {{
-    AsyncCallSite::async_call(self, req)
+{}fn {}(&mut self{}) -> <Self as Async{}>::{} {{
+    {}AsyncCallSite::async_call(self, {}){}
 }}"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -386,9 +485,40 @@ impl<'a> fmt::Display for AsyncCall<'a> {
                     ""
                 },
                 cmd.name.to_snake(),
-                domain.name.to_snake(),
-                cmd.name.to_capitalized(),
+                args(domain, cmd),
                 domain.name,
+                cmd.name.to_capitalized(),
+                if cmd.returns.len() <= MAX_INLINE_RETURNS {
+                    "Box::new("
+                } else {
+                    ""
+                },
+                if cmd.parameters.len() <= MAX_INLINE_PARAMS {
+                    format!(
+                        "{}::{}Request {{ {} }}",
+                        domain.name.to_snake(),
+                        cmd.name.to_capitalized(),
+                        cmd.parameters
+                            .iter()
+                            .map(|param| mangle(param.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    "req".to_owned()
+                },
+                if cmd.returns.len() <= MAX_INLINE_RETURNS {
+                    format!(
+                        ".map(|res| ({})))",
+                        cmd.returns
+                            .iter()
+                            .map(|param| format!("res.{}", param.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    "".to_owned()
+                }
             )?;
         }
 
@@ -440,7 +570,7 @@ use crate::*;"#
                         f,
                         "pub type {} = {};",
                         ty.id,
-                        Type(&ty.extends, Some(ty.id))
+                        Type(&ty.extends, Some(ty.id), None)
                     )?;
                 }
             }
@@ -579,7 +709,7 @@ pub enum Event {{
     }
 }
 
-struct Type<'a>(&'a pdl::Type<'a>, Option<&'a str>);
+struct Type<'a>(&'a pdl::Type<'a>, Option<&'a str>, Option<&'a str>);
 
 impl<'a> fmt::Display for Type<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -591,17 +721,21 @@ impl<'a> fmt::Display for Type<'a> {
             pdl::Type::Object => write!(f, "Object"),
             pdl::Type::Any => write!(f, "Any"),
             pdl::Type::Binary => write!(f, "Binary"),
-            pdl::Type::Enum(_) => unreachable! {},
-            pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, None)),
+            pdl::Type::Enum(_) => unreachable!(),
+            pdl::Type::ArrayOf(ty) => write!(f, "Vec<{}>", Type(&ty, None, self.2)),
             pdl::Type::Ref(id) => {
-                let parts = id.split('.').collect::<Vec<_>>();
-                let (last, parts) = parts.split_last().unwrap();
-                let ref_ty = parts
-                    .iter()
-                    .map(|s| s.to_snake())
-                    .chain(std::iter::once(last.to_string()))
-                    .collect::<Vec<_>>()
-                    .join("::");
+                let ref_ty = if id.contains('.') {
+                    let mut parts = id.split('.');
+
+                    let domain = parts.next().unwrap();
+                    let name = parts.next().unwrap();
+
+                    format!("{}::{}", domain.to_snake(), name.to_capitalized())
+                } else if let Some(domain) = self.2 {
+                    format!("{}::{}", domain.to_snake(), id.to_capitalized())
+                } else {
+                    id.to_capitalized()
+                };
 
                 if self.1 == Some(id) {
                     write!(f, "Box<{}>", ref_ty)
@@ -718,7 +852,7 @@ impl<'a> fmt::Display for Field<'a> {
         let ty = if let pdl::Type::Enum(_) = param.ty {
             format!("{}{}", self.1, param.name.to_capitalized())
         } else {
-            Type(&param.ty, Some(self.1)).to_string()
+            Type(&param.ty, Some(self.1), None).to_string()
         };
 
         if param.optional {

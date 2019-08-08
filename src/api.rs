@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
-struct Version {
+pub struct Version {
     #[serde(rename = "Browser")]
     pub browser: String,
 
@@ -23,7 +23,7 @@ struct Version {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Target {
+pub struct Target {
     pub description: String,
     pub devtools_frontend_url: String,
     pub id: String,

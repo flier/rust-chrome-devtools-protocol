@@ -8,7 +8,7 @@ use std::sync::{
 use std::thread;
 
 use chrome_devtools_protocol::{
-    browser::GetVersion, Browser, CallId, CallSite, Event, Message, Method, Response, Version,
+    Browser, CallId, CallSite, Event, Message, Method, Response, Version,
 };
 use failure::{bail, Error};
 use structopt::StructOpt;
@@ -119,20 +119,19 @@ fn main() -> Result<(), Error> {
 
             let version: Version = reqwest::get(uri.as_str())?.json()?;
 
-            println!("Version: {:#?}", version);
-
             Url::parse(&version.websocket_debugger_url)?
         }
         scheme @ _ => bail!("unsupport scheme: {}", scheme),
     };
 
     let client = websocket::ClientBuilder::new(ws_uri.as_str())?.connect_insecure()?;
-    let endpoint = Endpoint::new(client)?;
+    let mut endpoint = Endpoint::new(client)?;
 
-    let version = endpoint.get_version(GetVersion::default())?;
+    let version = endpoint.get_version()?;
+
     println!(
-        "hello {} {} (V8 {}, devtools {})",
-        version.product, version.revision, version.jsVersion, version.protocol_version
+        "hello {} (V8 {}, devtools {})",
+        version.product, version.js_version, version.protocol_version
     );
 
     Ok(())
