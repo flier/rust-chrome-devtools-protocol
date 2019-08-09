@@ -164,9 +164,9 @@ pub trait Async{}{} {{
 impl<T> Async{} for T
 where
     T: AsyncCallSite,
-    <T as CallSite>::Error: 'static,
+    <T as AsyncCallSite>::Error: 'static,
 {{
-    type Error = <T as CallSite>::Error;
+    type Error = <T as AsyncCallSite>::Error;
 {}}}"#,
                     experimental,
                     domain.name.to_snake(),
@@ -330,6 +330,87 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
     }
 }
 
+struct Call<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for Call<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                r#"
+{}fn {}(&mut self{}) -> Result<{}, <Self as {}>::Error> {{
+    CallSite::call(self, {}){}
+}}"#,
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                args(domain, cmd),
+                returns(domain, cmd),
+                domain.name,
+                inline_args(domain, cmd),
+                inline_returns(cmd),
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
+struct AsyncCall<'a>(&'a pdl::Domain<'a>);
+
+impl<'a> fmt::Display for AsyncCall<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let domain = self.0;
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                "{}type {} = Box<dyn Future<Item = {}, Error = <Self as CallSite>::Error>>;",
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_capitalized(),
+                returns(domain, cmd),
+            )?;
+        }
+
+        for cmd in &domain.commands {
+            writeln!(
+                f,
+                r#"
+{}fn {}(&mut self{}) -> <Self as Async{}>::{} {{
+    {}(AsyncCallSite::async_call(self, {}){})
+}}"#,
+                if cmd.experimental {
+                    "#[cfg(feature = \"experimental\")]\n"
+                } else {
+                    ""
+                },
+                cmd.name.to_snake(),
+                args(domain, cmd),
+                domain.name,
+                cmd.name.to_capitalized(),
+                if cmd.returns.len() <= MAX_INLINE_RETURNS {
+                    "Box::new"
+                } else {
+                    ""
+                },
+                inline_args(domain, cmd),
+                inline_returns(cmd)
+            )?;
+        }
+
+        Ok(())
+    }
+}
+
 fn args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
     if cmd.parameters.len() <= MAX_INLINE_PARAMS {
         cmd.parameters
@@ -397,132 +478,39 @@ fn returns(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
     }
 }
 
-struct Call<'a>(&'a pdl::Domain<'a>);
-
-impl<'a> fmt::Display for Call<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let domain = self.0;
-
-        for cmd in &domain.commands {
-            writeln!(
-                f,
-                r#"
-{}fn {}(&mut self{}) -> Result<{}, <Self as {}>::Error> {{
-    CallSite::call(self, {}){}
-}}"#,
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                cmd.name.to_snake(),
-                args(domain, cmd),
-                returns(domain, cmd),
-                domain.name,
-                if cmd.parameters.len() <= MAX_INLINE_PARAMS {
-                    format!(
-                        "{}::{}Request {{ {} }}",
-                        domain.name.to_snake(),
-                        cmd.name.to_capitalized(),
-                        cmd.parameters
-                            .iter()
-                            .map(|param| mangle(param.name))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    "req".to_owned()
-                },
-                if cmd.returns.len() <= MAX_INLINE_RETURNS {
-                    format!(
-                        ".map(|res| ({}))",
-                        cmd.returns
-                            .iter()
-                            .map(|param| format!("res.{}", param.name.to_snake()))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    "".to_owned()
-                }
-            )?;
-        }
-
-        Ok(())
+fn inline_args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
+    match cmd.parameters.len() {
+        0 => format!(
+            "{}::{}Request {{}}",
+            domain.name.to_snake(),
+            cmd.name.to_capitalized()
+        ),
+        n if n <= MAX_INLINE_PARAMS => format!(
+            "{}::{}Request {{ {} }}",
+            domain.name.to_snake(),
+            cmd.name.to_capitalized(),
+            cmd.parameters
+                .iter()
+                .map(|param| mangle(param.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => "req".to_owned(),
     }
 }
 
-struct AsyncCall<'a>(&'a pdl::Domain<'a>);
-
-impl<'a> fmt::Display for AsyncCall<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let domain = self.0;
-
-        for cmd in &domain.commands {
-            writeln!(
-                f,
-                "{}type {} = Box<dyn Future<Item = {}, Error = <Self as CallSite>::Error>>;",
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                cmd.name.to_capitalized(),
-                returns(domain, cmd),
-            )?;
-        }
-
-        for cmd in &domain.commands {
-            writeln!(
-                f,
-                r#"
-{}fn {}(&mut self{}) -> <Self as Async{}>::{} {{
-    {}AsyncCallSite::async_call(self, {}){}
-}}"#,
-                if cmd.experimental {
-                    "#[cfg(feature = \"experimental\")]\n"
-                } else {
-                    ""
-                },
-                cmd.name.to_snake(),
-                args(domain, cmd),
-                domain.name,
-                cmd.name.to_capitalized(),
-                if cmd.returns.len() <= MAX_INLINE_RETURNS {
-                    "Box::new("
-                } else {
-                    ""
-                },
-                if cmd.parameters.len() <= MAX_INLINE_PARAMS {
-                    format!(
-                        "{}::{}Request {{ {} }}",
-                        domain.name.to_snake(),
-                        cmd.name.to_capitalized(),
-                        cmd.parameters
-                            .iter()
-                            .map(|param| mangle(param.name))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    "req".to_owned()
-                },
-                if cmd.returns.len() <= MAX_INLINE_RETURNS {
-                    format!(
-                        ".map(|res| ({})))",
-                        cmd.returns
-                            .iter()
-                            .map(|param| format!("res.{}", param.name.to_snake()))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                } else {
-                    "".to_owned()
-                }
-            )?;
-        }
-
-        Ok(())
+fn inline_returns(cmd: &pdl::Command) -> String {
+    match cmd.returns.len() {
+        0 => ".map(|_| ())".to_owned(),
+        n if n <= MAX_INLINE_RETURNS => format!(
+            ".map(|res| ({}))",
+            cmd.returns
+                .iter()
+                .map(|param| format!("res.{}", param.name.to_snake()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => "".to_owned(),
     }
 }
 
