@@ -176,3 +176,30 @@ impl fmt::Display for RemoteError {
 }
 
 impl Error for RemoteError {}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::*;
+
+    #[test]
+    fn events() {
+        let test_cases = vec![(
+            Message::Event(Event::InspectorDetached(inspector::DetachedEvent {
+                reason: "target_closed".to_owned(),
+            })),
+            json!({
+                "method": "Inspector.detached",
+                "params": {
+                    "reason": "target_closed",
+                }
+            }),
+        )];
+
+        for (msg, json) in test_cases {
+            assert_eq!(serde_json::to_string(&msg).unwrap(), json.to_string());
+            assert_eq!(serde_json::from_value::<Message>(json).unwrap(), msg);
+        }
+    }
+}

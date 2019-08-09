@@ -193,7 +193,7 @@ pub mod {} {{
                 events.push(format!(
                     r#"{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
 #[serde(rename = "{}.{}")]
-{}{}({3}::{7}Event),"#,
+{}({3}::{}Event),"#,
                     Comments(&evt.description),
                     if evt.experimental {
                         "#[cfg(feature = \"experimental\")]\n"
@@ -208,7 +208,19 @@ pub mod {} {{
                     domain.name.to_snake(),
                     domain.name,
                     evt.name,
-                    domain.name.to_capitalized(),
+                    if evt
+                        .name
+                        .to_lowercase()
+                        .starts_with(&domain.name.to_lowercase())
+                    {
+                        evt.name.to_capitalized()
+                    } else {
+                        format!(
+                            "{}{}",
+                            domain.name.to_capitalized(),
+                            evt.name.to_capitalized()
+                        )
+                    },
                     evt.name.to_capitalized()
                 ));
             }
@@ -221,7 +233,7 @@ pub mod {} {{
 {}
 {}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "method")]
+#[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
 {}
@@ -678,7 +690,7 @@ use crate::*;"#
                 r#"{}
 {}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "method")]
+#[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
 {}
@@ -817,7 +829,7 @@ impl<'a> fmt::Display for Field<'a> {
 
         write!(
             f,
-            "{}{}{}{}pub {}: ",
+            "{}{}{}{}{}pub {}: ",
             Comments(&param.description),
             if param.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
@@ -833,6 +845,13 @@ impl<'a> fmt::Display for Field<'a> {
                 format!("#[serde(rename = \"{}\")]\n", param.name)
             } else {
                 "".to_owned()
+            },
+            if param.optional {
+                "#[serde(skip_serializing_if = \"Option::is_none\")]\n"
+            } else if let pdl::Type::ArrayOf(_) = param.ty {
+                "#[serde(skip_serializing_if = \"Vec::is_empty\")]\n"
+            } else {
+                ""
             },
             mangled_name
         )?;

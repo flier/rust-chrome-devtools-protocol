@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{de::DeserializeOwned, Serialize};
 
 #[cfg(feature = "async")]
@@ -37,7 +39,7 @@ where
 pub struct Call<T> {
     id: CallId,
     #[serde(rename = "method")]
-    method_name: &'static str,
+    method: &'static str,
     params: T,
 }
 
@@ -46,8 +48,8 @@ impl<T> Call<T> {
         self.id
     }
 
-    pub fn name(&self) -> &'static str {
-        self.method_name
+    pub fn method(&self) -> &'static str {
+        self.method
     }
 
     pub fn params(&self) -> &T {
@@ -55,7 +57,7 @@ impl<T> Call<T> {
     }
 }
 
-pub trait Method: Serialize {
+pub trait Method: fmt::Debug + Serialize {
     const NAME: &'static str;
 
     type ReturnObject: DeserializeOwned;
@@ -67,7 +69,7 @@ pub trait Method: Serialize {
         Call {
             id,
             params: self,
-            method_name: Self::NAME,
+            method: Self::NAME,
         }
     }
 }
