@@ -203,7 +203,7 @@ pub mod {} {{
                 events.push(format!(
                     r#"{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
 #[serde(rename = "{}.{}")]
-{}({3}::{}Event),"#,
+{}({3}::{}),"#,
                     Comments(&evt.description),
                     if evt.experimental {
                         "#[cfg(feature = \"experimental\")]\n"
@@ -231,7 +231,7 @@ pub mod {} {{
                             evt.name.to_capitalized()
                         )
                     },
-                    evt.name.to_capitalized()
+                    evt.mangled_name()
                 ));
             }
         }
@@ -452,7 +452,7 @@ fn args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
                     ty = format!("Option<{}>", ty)
                 }
 
-                format!(", {}: {}", mangle(param.name), ty)
+                format!(", {}: {}", param.mangled_name(), ty)
             })
             .collect::<Vec<_>>()
             .join("")
@@ -513,7 +513,7 @@ fn inline_args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
             cmd.name.to_capitalized(),
             cmd.parameters
                 .iter()
-                .map(|param| mangle(param.name))
+                .map(MangledName::mangled_name)
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -670,27 +670,27 @@ use crate::*;"#
                 ""
             };
 
+            let mangled_name = evt.mangled_name();
+
             writeln!(
                 f,
                 "{}{}{}{}",
                 Comments(&evt.description),
                 experimental,
                 deprecated,
-                Struct(
-                    &format!("{}Event", evt.name.to_capitalized()),
-                    &evt.parameters
-                )
+                Struct(&mangled_name, &evt.parameters)
             )?;
 
             events.push(format!(
                 r#"{}{}{}#[serde(rename = "{}.{}")]
-{}({5}Event),"#,
+{}({}),"#,
                 Comments(&evt.description),
                 experimental,
                 deprecated,
                 domain.name,
                 evt.name,
                 evt.name.to_capitalized(),
+                mangled_name,
             ));
         }
 
@@ -835,7 +835,7 @@ struct Field<'a>(&'a pdl::Param<'a>, &'a str);
 impl<'a> fmt::Display for Field<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let param = self.0;
-        let mangled_name = mangle(param.name);
+        let mangled_name = param.mangled_name();
 
         write!(
             f,
@@ -888,13 +888,31 @@ const KEYWORDS: &[&str] = &[
     "typeof", "unsized", "virtual", "yield", "async", "await", "try", "union",
 ];
 
-fn mangle(name: &str) -> String {
-    let name = name.replace('-', "").to_snake();
+trait MangledName {
+    fn mangled_name(&self) -> String;
+}
 
-    if KEYWORDS.contains(&name.as_str()) {
-        format!("r#{}", name)
-    } else {
-        name
+impl MangledName for pdl::Event<'_> {
+    fn mangled_name(&self) -> String {
+        let name = self.name.to_capitalized();
+
+        if name.ends_with("Event") {
+            name
+        } else {
+            format!("{}Event", name.to_capitalized())
+        }
+    }
+}
+
+impl MangledName for pdl::Param<'_> {
+    fn mangled_name(&self) -> String {
+        let name = self.name.replace('-', "").to_snake();
+
+        if KEYWORDS.contains(&name.as_str()) {
+            format!("r#{}", name)
+        } else {
+            name
+        }
     }
 }
 
