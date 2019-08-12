@@ -231,15 +231,14 @@ fn main() -> Result<(), Error> {
     session.enable()?;
     session.set_lifecycle_events_enabled(true)?;
 
-    dbg!(session.navigate(opt.url.to_string(), None, None, None)?).and_then(
-        |(frame_id, loader_id, err_msg)| {
-            if let Some(msg) = err_msg {
-                bail!("navigate failed, {}", msg);
-            }
+    let (frame_id, loader_id, err_msg) =
+        dbg!(session.navigate(opt.url.to_string(), None, None, None))?;
 
-            Ok(dbg!(session.wait_until_navigated(frame_id, loader_id)).unwrap())
-        },
-    )?;
+    if let Some(msg) = err_msg {
+        bail!("navigate failed, {}", msg);
+    }
+
+    dbg!(session.wait_until_navigated(frame_id, loader_id)).unwrap();
 
     let (data, _stream) = session.print_to_pdf(Default::default())?;
 
