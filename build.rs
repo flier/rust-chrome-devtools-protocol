@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs::File;
-use std::io::prelude::*;
+use std::io::{self, prelude::*};
 use std::path::Path;
 
 use case::CaseExt;
@@ -52,32 +53,95 @@ use futures::Future;
         )?;
     }
 
-    for path in pathes {
-        println!("cargo:rerun-if-changed={:?}", path.as_ref());
+    let files = pathes
+        .iter()
+        .map(|path| {
+            let path = path.as_ref();
 
-        let s = {
+            println!("cargo:rerun-if-changed={:?}", path);
+
             let mut f = File::open(path)?;
             let mut s = String::new();
             f.read_to_string(&mut s)?;
-            s
-        };
-        let (rest, pdl) = pdl::parse(&s).map_err(|_| err_msg("fail to parse PDL"))?;
 
-        if !rest.is_empty() {
-            bail!("unexpected: {}", rest)
+            Ok((path.to_owned(), s))
+        })
+        .collect::<Result<Vec<_>, io::Error>>()?;
+
+    let pdls = files
+        .iter()
+        .map(|(path, s)| {
+            let (rest, pdl) = pdl::parse(&s).map_err(|_| err_msg("fail to parse PDL"))?;
+
+            if !rest.is_empty() {
+                bail!("unexpected: {}", rest)
+            }
+
+            Ok((path.as_path(), pdl))
+        })
+        .collect::<Result<Vec<_>, Error>>()?;
+
+    let domains = pdls
+        .iter()
+        .flat_map(|(_, pdl)| pdl.domains.iter().map(|domain| (domain.name, domain)))
+        .collect::<HashMap<_, _>>();
+
+    let types = domains
+        .iter()
+        .flat_map(|(name, domain)| {
+            domain
+                .types
+                .iter()
+                .map(move |ty| ((*name, ty.id), (*domain, ty)))
+        })
+        .collect::<HashMap<_, _>>();
+
+    fn has_default(
+        types: &HashMap<(&str, &str), (&pdl::Domain, &pdl::TypeDef)>,
+        domain: &pdl::Domain,
+        struct_name: Option<&str>,
+        ty: &pdl::Type,
+    ) -> bool {
+        match ty {
+            pdl::Type::Integer
+            | pdl::Type::Number
+            | pdl::Type::Boolean
+            | pdl::Type::String
+            | pdl::Type::Object
+            | pdl::Type::Any
+            | pdl::Type::Binary
+            | pdl::Type::ArrayOf(_) => true,
+            pdl::Type::Enum(_) => false,
+            pdl::Type::Ref(id) if struct_name.map_or(false, |name| name == *id) => true,
+            pdl::Type::Ref(id) => {
+                let (domain_name, type_id) = if id.contains('.') {
+                    let mut iter = id.splitn(2, '.');
+
+                    (iter.next().unwrap(), iter.next().unwrap())
+                } else {
+                    (domain.name, *id)
+                };
+
+                let (domain, typedef) = types.get(&(domain_name, type_id)).unwrap();
+
+                match typedef.item {
+                    Some(pdl::Item::Enum(_)) => false,
+                    Some(pdl::Item::Properties(ref params)) => params.iter().all(|param| {
+                        param.optional || has_default(types, domain, struct_name, &param.ty)
+                    }),
+                    None => has_default(types, domain, struct_name, &typedef.extends),
+                }
+            }
         }
+    }
 
+    for (path, pdl) in &pdls {
         writeln!(
             f,
             r#"{}#[doc(hidden)]
 pub const {}_VERSION: &str = "{}.{}";"#,
             Comments(&pdl.description),
-            path.as_ref()
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_uppercase(),
+            path.file_stem().unwrap().to_str().unwrap().to_uppercase(),
             pdl.version.major,
             pdl.version.minor
         )?;
@@ -196,7 +260,12 @@ pub mod {} {{
                 experimental,
                 deprecated,
                 domain.name.to_snake(),
-                indented(Mod(domain))
+                indented(Mod(domain, |domain, struct_name, ty| has_default(
+                    &types,
+                    domain,
+                    struct_name,
+                    ty
+                )))
             )?;
 
             for evt in &domain.events {
@@ -536,11 +605,15 @@ fn inline_returns(cmd: &pdl::Command) -> String {
     }
 }
 
-struct Mod<'a>(&'a pdl::Domain<'a>);
+struct Mod<'a, F>(&'a pdl::Domain<'a>, F);
 
-impl<'a> fmt::Display for Mod<'a> {
+impl<'a, F> fmt::Display for Mod<'a, F>
+where
+    F: Fn(&'a pdl::Domain<'a>, Option<&'a str>, &'a pdl::Type<'a>) -> bool,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
+        let has_default = &self.1;
         let mut events = vec![];
 
         writeln!(
@@ -572,7 +645,11 @@ use crate::*;"#
                             ""
                         },
                         if ty.deprecated { "#[deprecated]\n" } else { "" },
-                        Struct(ty.id, props)
+                        Struct(ty.id.to_owned(), props, |name| has_default(
+                            domain,
+                            Some(ty.id),
+                            name
+                        ))
                     )?;
                 }
                 None => {
@@ -629,7 +706,9 @@ use crate::*;"#
                 cmd.name,
                 experimental,
                 deprecated,
-                Struct(&request, &cmd.parameters)
+                Struct(request, &cmd.parameters, |name| has_default(
+                    domain, None, name
+                ))
             )?;
             write!(
                 f,
@@ -640,7 +719,9 @@ use crate::*;"#
                 cmd.name,
                 experimental,
                 deprecated,
-                Struct(&response, &cmd.returns)
+                Struct(response, &cmd.returns, |name| has_default(
+                    domain, None, name
+                ))
             )?;
             writeln!(
                 f,
@@ -672,15 +753,6 @@ use crate::*;"#
 
             let mangled_name = evt.mangled_name();
 
-            writeln!(
-                f,
-                "{}{}{}{}",
-                Comments(&evt.description),
-                experimental,
-                deprecated,
-                Struct(&mangled_name, &evt.parameters)
-            )?;
-
             events.push(format!(
                 r#"{}{}{}#[serde(rename = "{}.{}")]
 {}({}),"#,
@@ -692,6 +764,17 @@ use crate::*;"#
                 evt.name.to_capitalized(),
                 mangled_name,
             ));
+
+            writeln!(
+                f,
+                "{}{}{}{}",
+                Comments(&evt.description),
+                experimental,
+                deprecated,
+                Struct(mangled_name, &evt.parameters, |name| has_default(
+                    domain, None, name
+                ))
+            )?;
         }
 
         if !events.is_empty() {
@@ -788,30 +871,45 @@ impl<'a> fmt::Display for Variant<'a> {
     }
 }
 
-struct Struct<'a>(&'a str, &'a [pdl::Param<'a>]);
+struct Struct<'a, F>(String, &'a [pdl::Param<'a>], F);
 
-impl<'a> fmt::Display for Struct<'a> {
+impl<'a, F> fmt::Display for Struct<'a, F>
+where
+    F: Fn(&'a pdl::Type<'a>) -> bool,
+{
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = &self.0;
+        let params = self.1;
+        let has_default = &self.2;
+
         writeln!(
             f,
-            r#"#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+            r#"#[derive(Clone, Debug{}, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct {} {{"#,
-            self.0
+            if params
+                .iter()
+                .all(|param| param.optional || has_default(&param.ty))
+            {
+                ", Default"
+            } else {
+                ""
+            },
+            name
         )?;
 
-        for prop in self.1 {
-            writeln!(f, "{},", indented(Field(&prop, self.0)))?;
+        for prop in params {
+            writeln!(f, "{},", indented(Field(&prop, &name)))?;
         }
 
         writeln!(f, "}}")?;
 
-        for prop in self.1 {
+        for prop in params {
             if let pdl::Type::Enum(ref variants) = prop.ty {
                 write!(
                     f,
                     "\n/// Allow values for the `{}::{}` field.\n{}{}",
-                    self.0,
+                    name,
                     prop.name,
                     if prop.experimental {
                         "#[cfg(feature = \"experimental\")]\n"

@@ -28,7 +28,7 @@ pub type Object = Map<String, Value>;
 pub type Any = Value;
 
 /// Represents a base64-encoded `binary` type.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Binary(Vec<u8>);
 
 impl Deref for Binary {
