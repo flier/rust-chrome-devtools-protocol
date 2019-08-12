@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::convert::TryInto;
+use std::fs;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     mpsc::{self, channel, Receiver, Sender},
@@ -8,22 +8,46 @@ use std::sync::{
 use std::thread;
 
 use chrome_devtools_protocol::{
-    api::Version, target, Browser, CallId, CallSite, Event, EventSource, Message, Method, Page,
-    Response, Target,
+    api::Version, network, page, target, Browser, CallId, CallSite, Event, EventSource, Message,
+    Method, Page, Response, Target,
 };
 use failure::{bail, Error};
 use structopt::StructOpt;
 use url::Url;
 use websocket::{message::OwnedMessage, sender::Writer, stream::sync::TcpStream};
 
-const DEFAULT_TARGET: &str = "http://localhost:9222";
-
 #[derive(Debug, StructOpt)]
 #[structopt(name = "hello", about = "Say hello to Chrome")]
 struct Opt {
     /// Chrome DevTools endpoint (default: http://localhost:9222)
-    #[structopt(name = "scheme://host[:port]")]
-    target: Option<String>,
+    #[structopt(
+        name = "scheme://host[:port]",
+        long,
+        short,
+        default_value = "http://localhost:9222"
+    )]
+    endpoint: String,
+
+    #[structopt(default_value = "https://www.wikipedia.org")]
+    url: Url,
+}
+
+impl Opt {
+    fn websocket_debugger_url(&self) -> Result<Url, Error> {
+        let mut uri = Url::parse(self.endpoint.as_str())?;
+
+        match uri.scheme() {
+            "ws" | "wss" => Ok(uri),
+            "http" => {
+                uri.set_path("/json/version");
+
+                let version: Version = dbg!(reqwest::get(uri.as_str())?.json()?);
+
+                Ok(Url::parse(&version.websocket_debugger_url)?)
+            }
+            scheme @ _ => bail!("unsupport scheme: {}", scheme),
+        }
+    }
 }
 
 type RequestQueue = Arc<Mutex<HashMap<CallId, Sender<Response>>>>;
@@ -52,10 +76,13 @@ impl Endpoint {
                     while msg.is_some() {
                         match msg.take().unwrap() {
                             OwnedMessage::Text(text) => match dbg!(text.parse().unwrap()) {
-                                Message::Event(Event::TargetReceivedMessageFromTarget(evt)) => {
-                                    msg = Some(OwnedMessage::Text(evt.message));
+                                Message::Event(evt) => {
+                                    if let Event::TargetReceivedMessageFromTarget(evt) = evt {
+                                        msg = Some(OwnedMessage::Text(evt.message));
+                                    } else {
+                                        event_queue.send(evt).unwrap()
+                                    }
                                 }
-                                Message::Event(evt) => event_queue.send(evt).unwrap(),
                                 Message::Response(res) => {
                                     if let Some(sender) =
                                         request_queue.lock().unwrap().remove(&res.call_id)
@@ -113,9 +140,54 @@ impl<'a> EventSource<'a> for Endpoint {
     }
 }
 
+impl Endpoint {
+    fn wait_for_initial_tab(&mut self) -> Option<target::TargetInfo> {
+        self.events().find_map(|evt| {
+            if let Event::TargetCreated(evt) = evt {
+                if evt.target_info.r#type == "page" {
+                    Some(evt.target_info)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    }
+}
+
 struct Session {
     endpoint: Endpoint,
     session_id: String,
+}
+
+impl Session {
+    fn browser(&mut self) -> &mut Browser<Error = Error> {
+        &mut self.endpoint
+    }
+
+    fn wait_until_navigated(
+        &mut self,
+        frame_id: page::FrameId,
+        loader_id: Option<network::LoaderId>,
+    ) -> Option<page::LifecycleEvent> {
+        self.endpoint.events().find_map(|evt| {
+            if let Event::PageLifecycleEvent(evt) = evt {
+                if evt.frame_id == frame_id
+                    && loader_id
+                        .as_ref()
+                        .map_or(true, |loader_id| loader_id == &evt.loader_id)
+                    && (evt.name == "networkAlmostIdle" || evt.name == "init")
+                {
+                    Some(evt)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    }
 }
 
 impl CallSite for Session {
@@ -142,46 +214,15 @@ impl CallSite for Session {
 fn main() -> Result<(), Error> {
     let opt = Opt::from_args();
 
-    let mut uri = Url::parse(&opt.target.unwrap_or(DEFAULT_TARGET.to_owned()))?;
-
-    let ws_uri = match uri.scheme() {
-        "ws" | "wss" => uri.clone(),
-        "http" => {
-            uri.set_path("/json/version");
-
-            let version: Version = dbg!(reqwest::get(uri.as_str())?.json()?);
-
-            Url::parse(&version.websocket_debugger_url)?
-        }
-        scheme @ _ => bail!("unsupport scheme: {}", scheme),
-    };
-
+    let ws_uri = opt.websocket_debugger_url()?;
     let mut browser = Endpoint::new(&ws_uri)?;
-    let version = dbg!(browser.get_version()?);
-
-    println!(
-        "hello {} (V8 {}, devtools {})",
-        version.product, version.js_version, version.protocol_version
-    );
+    let _version = dbg!(browser.get_version()?);
 
     browser.set_discover_targets(true)?;
 
-    let mut target_id = None;
+    let target_id = browser.wait_for_initial_tab().unwrap().target_id;
+    let session_id = dbg!(browser.attach_to_target(target_id, None)?);
 
-    for event in browser.events() {
-        match dbg!(event) {
-            Event::TargetCreated(target::TargetCreatedEvent { ref target_info })
-                if target_info.r#type == "page" =>
-            {
-                target_id = Some(target_info.target_id.clone());
-
-                break;
-            }
-            _ => {}
-        }
-    }
-
-    let session_id = dbg!(browser.attach_to_target(target_id.unwrap(), None)?);
     let mut session = Session {
         endpoint: browser,
         session_id,
@@ -190,8 +231,19 @@ fn main() -> Result<(), Error> {
     session.enable()?;
     session.set_lifecycle_events_enabled(true)?;
 
-    let (frame_id, loader_id, err_msg) =
-        dbg!(session.navigate("https://www.google.com/".to_owned(), None, None, None)?);
+    dbg!(session.navigate(opt.url.to_string(), None, None, None)?).and_then(
+        |(frame_id, loader_id, err_msg)| {
+            if let Some(msg) = err_msg {
+                bail!("navigate failed, {}", msg);
+            }
+
+            Ok(dbg!(session.wait_until_navigated(frame_id, loader_id)).unwrap())
+        },
+    )?;
+
+    let (data, _stream) = session.print_to_pdf(Default::default())?;
+
+    fs::write("output.pdf", data)?;
 
     Ok(())
 }

@@ -45,6 +45,18 @@ impl DerefMut for Binary {
     }
 }
 
+impl AsRef<[u8]> for Binary {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl AsMut<[u8]> for Binary {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.0.as_mut_slice()
+    }
+}
+
 impl From<Vec<u8>> for Binary {
     fn from(s: Vec<u8>) -> Self {
         Binary(s)
