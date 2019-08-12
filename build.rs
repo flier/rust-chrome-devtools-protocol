@@ -82,7 +82,17 @@ pub const {}_VERSION: &str = "{}.{}";"#,
             pdl.version.minor
         )?;
 
+        let all_domains = env::var_os("CARGO_FEATURE_ALL").is_some();
+
         for domain in &pdl.domains {
+            if !all_domains
+                && env::var_os(format!("CARGO_FEATURE_{}", domain.name.to_uppercase())).is_none()
+            {
+                continue;
+            }
+
+            println!("generating domain: {}", domain.name);
+
             let experimental = if domain.experimental {
                 "#[cfg(feature = \"experimental\")]\n"
             } else {
