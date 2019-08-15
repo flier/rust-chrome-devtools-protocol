@@ -48,9 +48,6 @@ use crate::CallSite;"#
             f,
             r#"
 #[cfg(feature = "async")]
-use futures::Future;
-
-#[cfg(feature = "async")]
 use crate::AsyncCallSite;
 "#
         )?;
@@ -385,7 +382,7 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                r#"{}type {}: Future<Item = ({}, Self), Error = <Self as Async{}>::Error>;"#,
+                r#"{}type {}: futures::Future<Item = ({}, Self), Error = <Self as Async{}>::Error>;"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
@@ -463,7 +460,7 @@ impl<'a> fmt::Display for AsyncCallSite<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "{}type {} = Box<dyn Future<Item = ({}, Self), Error = <Self as AsyncCallSite>::Error> + Send>;",
+                "{}type {} = Box<dyn futures::Future<Item = ({}, Self), Error = <Self as AsyncCallSite>::Error> + Send>;",
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
