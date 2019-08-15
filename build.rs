@@ -48,6 +48,9 @@ use crate::CallSite;"#
             f,
             r#"
 #[cfg(feature = "async")]
+use futures::Future;
+
+#[cfg(feature = "async")]
 use crate::AsyncCallSite;
 "#
         )?;
