@@ -11,19 +11,19 @@ use chrome_devtools_protocol::{
     api::Version, network, page, target, Browser, CallId, CallSite, Event, EventSource, Message,
     Method, Page, Response, Target,
 };
-use failure::{bail, Error};
+use failure::{bail, Error, Fallible};
 use structopt::StructOpt;
 use url::Url;
 use websocket::{message::OwnedMessage, sender::Writer, stream::sync::TcpStream};
 
 #[derive(Debug, StructOpt)]
-#[structopt(name = "hello", about = "Say hello to Chrome")]
+#[structopt(name = "print_to_pdf", about = "Print the web page to a PDF file")]
 struct Opt {
     /// Chrome DevTools endpoint (default: http://localhost:9222)
     #[structopt(
         name = "scheme://host[:port]",
-        long,
-        short,
+        long = "endpoint",
+        short = "e",
         default_value = "http://localhost:9222"
     )]
     endpoint: String,
@@ -33,7 +33,7 @@ struct Opt {
 }
 
 impl Opt {
-    fn websocket_debugger_url(&self) -> Result<Url, Error> {
+    fn websocket_debugger_url(&self) -> Fallible<Url> {
         let mut uri = Url::parse(self.endpoint.as_str())?;
 
         match uri.scheme() {
@@ -61,7 +61,7 @@ struct Endpoint {
 }
 
 impl Endpoint {
-    pub fn new(uri: &Url) -> Result<Self, Error> {
+    pub fn new(uri: &Url) -> Fallible<Self> {
         let client = websocket::ClientBuilder::new(uri.as_str())?.connect_insecure()?;
         let (mut receiver, sender) = client.split()?;
         let (event_queue, events) = channel();
@@ -118,7 +118,11 @@ impl Endpoint {
 impl CallSite for Endpoint {
     type Error = Error;
 
-    fn call<T: Method>(&mut self, method: T) -> Result<T::ReturnObject, Self::Error> {
+    fn call<M>(&mut self, method: M) -> Result<M::ReturnObject, Self::Error>
+    where
+        M: Method,
+        M::ReturnObject: 'static,
+    {
         let call = dbg!(Method::to_method_call(method, self.next_call_id()));
         let json = dbg!(serde_json::to_string(&call)?);
         let msg = websocket::Message::text(json);
@@ -135,7 +139,7 @@ impl<'a> EventSource<'a> for Endpoint {
     type Event = Event;
     type Events = mpsc::Iter<'a, Event>;
 
-    fn events(&'a self) -> mpsc::Iter<'a, Event> {
+    fn events(&'a mut self) -> mpsc::Iter<'a, Event> {
         self.events.iter()
     }
 }
@@ -211,7 +215,9 @@ impl CallSite for Session {
     }
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Fallible<()> {
+    pretty_env_logger::init();
+
     let opt = Opt::from_args();
 
     let ws_uri = opt.websocket_debugger_url()?;

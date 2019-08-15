@@ -2,37 +2,28 @@ use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-#[cfg(feature = "async")]
-use futures::future::Future;
-
 pub type CallId = usize;
 
 pub trait CallSite {
     type Error;
 
-    fn call<M: Method>(&mut self, method: M) -> Result<M::ReturnObject, Self::Error>;
+    fn call<M>(&mut self, method: M) -> Result<M::ReturnObject, Self::Error>
+    where
+        M: Method,
+        M::ReturnObject: 'static + Send;
 }
 
 #[cfg(feature = "async")]
 pub trait AsyncCallSite {
     type Error;
 
-    fn async_call<M: Method>(
-        &mut self,
+    fn async_call<M>(
+        self,
         method: M,
-    ) -> Box<dyn futures::Future<Item = M::ReturnObject, Error = <Self as AsyncCallSite>::Error>>;
-}
-
-#[cfg(feature = "async")]
-impl<T> CallSite for T
-where
-    T: AsyncCallSite,
-{
-    type Error = <T as AsyncCallSite>::Error;
-
-    fn call<M: Method>(&mut self, method: M) -> Result<M::ReturnObject, Self::Error> {
-        self.async_call(method).wait()
-    }
+    ) -> Box<dyn futures::Future<Item = (M::ReturnObject, Self), Error = Self::Error> + Send>
+    where
+        M: Method,
+        M::ReturnObject: 'static + Send;
 }
 
 #[derive(Serialize, Debug)]

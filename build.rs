@@ -40,7 +40,7 @@ fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
         f,
         r#"use serde::{{Serialize, Deserialize}};
 
-use crate::{{AsyncCallSite, CallSite}};"#
+use crate::CallSite;"#
     )?;
 
     if cfg!(feature = "async") {
@@ -49,6 +49,9 @@ use crate::{{AsyncCallSite, CallSite}};"#
             r#"
 #[cfg(feature = "async")]
 use futures::Future;
+
+#[cfg(feature = "async")]
+use crate::AsyncCallSite;
 "#
         )?;
     }
@@ -198,7 +201,7 @@ impl<T> {} for T where T: CallSite {{
                 experimental,
                 domain.name.to_snake(),
                 domain.name,
-                indented(Call(domain))
+                indented(CallSite(domain))
             )?;
 
             if cfg!(feature = "async") {
@@ -206,7 +209,7 @@ impl<T> {} for T where T: CallSite {{
                     f,
                     r#"
 {}{}{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
-pub trait Async{}{} {{
+pub trait Async{}{} where Self: Sized {{
     type Error;
 {}}}"#,
                     Comments(&domain.description),
@@ -217,16 +220,15 @@ pub trait Async{}{} {{
                     if domain.dependencies.is_empty() {
                         "".to_owned()
                     } else {
-                        let dependencies = std::iter::once(domain.name.to_owned())
-                            .chain(
-                                domain
-                                    .dependencies
-                                    .iter()
-                                    .map(|name| format!("Async{}", name)),
-                            )
-                            .collect::<Vec<_>>();
-
-                        format!(": {}", dependencies.join(" + "))
+                        format!(
+                            ": {}",
+                            domain
+                                .dependencies
+                                .iter()
+                                .map(|name| format!("Async{}", name))
+                                .collect::<Vec<_>>()
+                                .join(" + ")
+                        )
                     },
                     indented(AsyncTrait(domain))
                 )?;
@@ -237,7 +239,7 @@ pub trait Async{}{} {{
 {}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
 impl<T> Async{} for T
 where
-    T: AsyncCallSite,
+    T: AsyncCallSite + 'static,
     <T as AsyncCallSite>::Error: 'static,
 {{
     type Error = <T as AsyncCallSite>::Error;
@@ -245,7 +247,7 @@ where
                     experimental,
                     domain.name.to_snake(),
                     domain.name,
-                    indented(AsyncCall(domain))
+                    indented(AsyncCallSite(domain))
                 )?;
             }
 
@@ -383,7 +385,7 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                r#"{}type {}: Future<Item = {}, Error = <Self as Async{}>::Error>;"#,
+                r#"{}type {}: Future<Item = ({}, Self), Error = <Self as Async{}>::Error>;"#,
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
@@ -398,7 +400,7 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "\n{}{}{}fn {}(&mut self{}) -> <Self as Async{}>::{};",
+                "\n{}{}{}fn {}(self{}) -> <Self as Async{}>::{};",
                 Comments(&cmd.description),
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
@@ -421,9 +423,9 @@ impl<'a> fmt::Display for AsyncTrait<'a> {
     }
 }
 
-struct Call<'a>(&'a pdl::Domain<'a>);
+struct CallSite<'a>(&'a pdl::Domain<'a>);
 
-impl<'a> fmt::Display for Call<'a> {
+impl<'a> fmt::Display for CallSite<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
 
@@ -444,7 +446,7 @@ impl<'a> fmt::Display for Call<'a> {
                 returns(domain, cmd),
                 domain.name,
                 inline_args(domain, cmd),
-                inline_returns(cmd),
+                inline_returns(cmd, true),
             )?;
         }
 
@@ -452,16 +454,16 @@ impl<'a> fmt::Display for Call<'a> {
     }
 }
 
-struct AsyncCall<'a>(&'a pdl::Domain<'a>);
+struct AsyncCallSite<'a>(&'a pdl::Domain<'a>);
 
-impl<'a> fmt::Display for AsyncCall<'a> {
+impl<'a> fmt::Display for AsyncCallSite<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let domain = self.0;
 
         for cmd in &domain.commands {
             writeln!(
                 f,
-                "{}type {} = Box<dyn Future<Item = {}, Error = <Self as CallSite>::Error>>;",
+                "{}type {} = Box<dyn Future<Item = ({}, Self), Error = <Self as AsyncCallSite>::Error> + Send>;",
                 if cmd.experimental {
                     "#[cfg(feature = \"experimental\")]\n"
                 } else {
@@ -476,7 +478,7 @@ impl<'a> fmt::Display for AsyncCall<'a> {
             writeln!(
                 f,
                 r#"
-{}fn {}(&mut self{}) -> <Self as Async{}>::{} {{
+{}fn {}(self{}) -> <Self as Async{}>::{} {{
     {}(AsyncCallSite::async_call(self, {}){})
 }}"#,
                 if cmd.experimental {
@@ -494,7 +496,7 @@ impl<'a> fmt::Display for AsyncCall<'a> {
                     ""
                 },
                 inline_args(domain, cmd),
-                inline_returns(cmd)
+                inline_returns(cmd, false)
             )?;
         }
 
@@ -590,17 +592,28 @@ fn inline_args(domain: &pdl::Domain, cmd: &pdl::Command) -> String {
     }
 }
 
-fn inline_returns(cmd: &pdl::Command) -> String {
+fn inline_returns(cmd: &pdl::Command, sync: bool) -> String {
     match cmd.returns.len() {
-        0 => ".map(|_| ())".to_owned(),
-        n if n <= MAX_INLINE_RETURNS => format!(
-            ".map(|res| ({}))",
-            cmd.returns
+        0 => if sync {
+            ".map(|_| ())"
+        } else {
+            ".map(|(_, self_)| ((), self_))"
+        }
+        .to_owned(),
+        n if n <= MAX_INLINE_RETURNS => {
+            let returns = cmd
+                .returns
                 .iter()
                 .map(|param| format!("res.{}", param.name.to_snake()))
                 .collect::<Vec<_>>()
-                .join(", ")
-        ),
+                .join(", ");
+
+            if sync {
+                format!(".map(|res| ({}))", returns)
+            } else {
+                format!(".map(|(res, self_)| (({}), self_))", returns)
+            }
+        }
         _ => "".to_owned(),
     }
 }

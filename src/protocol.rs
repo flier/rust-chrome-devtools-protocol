@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![allow(clippy::type_complexity)]
 
 use std::error::Error;
 use std::fmt;
