@@ -1,6 +1,8 @@
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "server", derive(Serialize))]
+#[cfg_attr(feature = "client", derive(Deserialize))]
+#[derive(Clone, Debug)]
 pub struct Version {
     #[serde(rename = "Browser")]
     pub browser: String,
@@ -21,7 +23,9 @@ pub struct Version {
     pub websocket_debugger_url: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "server", derive(Serialize))]
+#[cfg_attr(feature = "client", derive(Deserialize))]
+#[derive(Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Target {
     pub description: String,

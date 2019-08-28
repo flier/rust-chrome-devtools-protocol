@@ -137,7 +137,9 @@ impl<'de> serde::de::Visitor<'de> for BinaryVisitor {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(Serialize))]
+#[cfg_attr(feature = "client", derive(Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
 pub enum Message {
@@ -154,7 +156,9 @@ impl FromStr for Message {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(Serialize))]
+#[cfg_attr(feature = "client", derive(Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Response {
     #[serde(rename = "id")]
     pub call_id: CallId,
@@ -176,7 +180,9 @@ impl Response {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "server", derive(Serialize))]
+#[cfg_attr(feature = "client", derive(Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RemoteError {
     pub code: i32,
     pub message: String,

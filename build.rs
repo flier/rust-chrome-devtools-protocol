@@ -194,7 +194,7 @@ pub trait {}{} {{
             writeln!(
                 f,
                 r#"
-{}#[cfg(any(feature = "all", feature = "{}"))]
+{}#[cfg(all(feature = "client", any(feature = "all", feature = "{}")))]
 impl<T> {} for T where T: CallSite {{
     type Error = <T as CallSite>::Error;
 {}}}"#,
@@ -236,7 +236,7 @@ pub trait Async{}{} where Self: Sized {{
                 writeln!(
                     f,
                     r#"
-{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
+{}#[cfg(all(feature = "client", feature = "async", any(feature = "all", feature = "{}")))]
 impl<T> Async{} for T
 where
     T: AsyncCallSite + 'static,
@@ -313,7 +313,9 @@ pub mod {} {{
         r#"
 {}
 {}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature="server", derive(Serialize))]
+#[cfg_attr(feature="client", derive(Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
@@ -651,7 +653,7 @@ use crate::*;"#
                 Some(pdl::Item::Properties(ref props)) => {
                     write!(
                         f,
-                        "{}{}{}",
+                        "{}{}#[derive(Serialize, Deserialize)]\n{}",
                         if ty.experimental {
                             "#[cfg(feature = \"experimental\")]\n"
                         } else {
@@ -714,7 +716,9 @@ use crate::*;"#
                 f,
                 r#"
 /// Request object of the `{}::{}` command.
-{}{}{}"#,
+{}{}#[cfg_attr(feature="server", derive(Deserialize))]
+#[cfg_attr(feature="client", derive(Serialize))]
+{}"#,
                 domain.name,
                 cmd.name,
                 experimental,
@@ -727,7 +731,9 @@ use crate::*;"#
                 f,
                 r#"
 /// Response object of the `{}::{}` command.
-{}{}{}"#,
+{}{}#[cfg_attr(feature="server", derive(Serialize))]
+#[cfg_attr(feature="client", derive(Deserialize))]
+{}"#,
                 domain.name,
                 cmd.name,
                 experimental,
@@ -780,7 +786,9 @@ use crate::*;"#
 
             writeln!(
                 f,
-                "{}{}{}{}",
+                r#"{}{}{}#[cfg_attr(feature="server", derive(Serialize))]
+#[cfg_attr(feature="client", derive(Deserialize))]
+{}"#,
                 Comments(&evt.description),
                 experimental,
                 deprecated,
@@ -795,7 +803,9 @@ use crate::*;"#
                 f,
                 r#"{}
 {}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature="server", derive(Serialize))]
+#[cfg_attr(feature="client", derive(Deserialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
@@ -897,7 +907,7 @@ where
 
         writeln!(
             f,
-            r#"#[derive(Clone, Debug{}, PartialEq, Serialize, Deserialize)]
+            r#"#[derive(Clone, Debug{}, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct {} {{"#,
             if params
