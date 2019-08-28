@@ -19,7 +19,6 @@ const EVENTS: &str = r#"pub trait Events {
 }"#;
 
 const ASYNC_EVENTS: &str = r#"
-#[cfg(feature = "async")]
 pub trait AsyncEvents {
     type Error;
     type Events: futures::Stream<Item = Event, Error = Self::Error>;
@@ -47,10 +46,8 @@ use crate::CallSite;"#
         writeln!(
             f,
             r#"
-#[cfg(feature = "async")]
 use futures::Future;
 
-#[cfg(feature = "async")]
 use crate::AsyncCallSite;
 "#
         )?;
@@ -208,7 +205,7 @@ impl<T> {} for T where T: CallSite {{
                 writeln!(
                     f,
                     r#"
-{}{}{}#[cfg(all(feature = "async", any(feature = "all", feature = "{}")))]
+{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
 pub trait Async{}{} where Self: Sized {{
     type Error;
 {}}}"#,
@@ -236,7 +233,7 @@ pub trait Async{}{} where Self: Sized {{
                 writeln!(
                     f,
                     r#"
-{}#[cfg(all(feature = "client", feature = "async", any(feature = "all", feature = "{}")))]
+{}#[cfg(all(feature = "client", any(feature = "all", feature = "{}")))]
 impl<T> Async{} for T
 where
     T: AsyncCallSite + 'static,
