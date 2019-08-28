@@ -37,16 +37,25 @@ fn gen<P: AsRef<Path>>(pathes: &[P]) -> Result<(), Error> {
 
     writeln!(
         f,
-        r#"use serde::{{Serialize, Deserialize}};
-
-use crate::CallSite;"#
+        r#"{}{}
+use crate::CallSite;
+"#,
+        if cfg!(feature = "server") {
+            "use serde::Serialize;\n"
+        } else {
+            ""
+        },
+        if cfg!(feature = "client") {
+            "use serde::Deserialize;\n"
+        } else {
+            ""
+        }
     )?;
 
     if cfg!(feature = "async") {
         writeln!(
             f,
-            r#"
-use futures::Future;
+            r#"use futures::Future;
 
 use crate::AsyncCallSite;
 "#
@@ -171,14 +180,12 @@ pub const {}_VERSION: &str = "{}.{}";"#,
             writeln!(
                 f,
                 r#"
-{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
-pub trait {}{} {{
+{}{}{}pub trait {}{} {{
     type Error;
 {}}}"#,
                 Comments(&domain.description),
                 experimental,
                 deprecated,
-                domain.name.to_snake(),
                 domain.name,
                 if domain.dependencies.is_empty() {
                     "".to_owned()
@@ -188,31 +195,29 @@ pub trait {}{} {{
                 indented(Trait(domain))
             )?;
 
-            writeln!(
-                f,
-                r#"
-{}#[cfg(all(feature = "client", any(feature = "all", feature = "{}")))]
-impl<T> {} for T where T: CallSite {{
+            if cfg!(feature = "client") {
+                writeln!(
+                    f,
+                    r#"
+{}impl<T> {} for T where T: CallSite {{
     type Error = <T as CallSite>::Error;
 {}}}"#,
-                experimental,
-                domain.name.to_snake(),
-                domain.name,
-                indented(CallSite(domain))
-            )?;
+                    experimental,
+                    domain.name,
+                    indented(CallSite(domain))
+                )?;
+            }
 
             if cfg!(feature = "async") {
                 writeln!(
                     f,
                     r#"
-{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
-pub trait Async{}{} where Self: Sized {{
+{}{}{}pub trait Async{}{} where Self: Sized {{
     type Error;
 {}}}"#,
                     Comments(&domain.description),
                     experimental,
                     deprecated,
-                    domain.name.to_snake(),
                     domain.name,
                     if domain.dependencies.is_empty() {
                         "".to_owned()
@@ -230,29 +235,28 @@ pub trait Async{}{} where Self: Sized {{
                     indented(AsyncTrait(domain))
                 )?;
 
-                writeln!(
-                    f,
-                    r#"
-{}#[cfg(all(feature = "client", any(feature = "all", feature = "{}")))]
-impl<T> Async{} for T
+                if cfg!(feature = "client") {
+                    writeln!(
+                        f,
+                        r#"
+{}impl<T> Async{} for T
 where
     T: AsyncCallSite + 'static,
     <T as AsyncCallSite>::Error: 'static,
 {{
     type Error = <T as AsyncCallSite>::Error;
 {}}}"#,
-                    experimental,
-                    domain.name.to_snake(),
-                    domain.name,
-                    indented(AsyncCallSite(domain))
-                )?;
+                        experimental,
+                        domain.name,
+                        indented(AsyncCallSite(domain))
+                    )?;
+                }
             }
 
             writeln!(
                 f,
                 r#"
-{}{}{}#[cfg(any(feature = "all", feature = "{3}"))]
-#[allow(deprecated)]
+{}{}{}#[allow(deprecated)]
 pub mod {} {{
 {}}}"#,
                 Comments(&domain.description),
@@ -269,9 +273,8 @@ pub mod {} {{
 
             for evt in &domain.events {
                 events.push(format!(
-                    r#"{}{}{}#[cfg(any(feature = "all", feature = "{}"))]
-#[serde(rename = "{}.{}")]
-{}({3}::{}),"#,
+                    r#"{}{}{}#[serde(rename = "{}.{}")]
+{}({}::{}),"#,
                     Comments(&evt.description),
                     if evt.experimental {
                         "#[cfg(feature = \"experimental\")]\n"
@@ -283,7 +286,6 @@ pub mod {} {{
                     } else {
                         ""
                     },
-                    domain.name.to_snake(),
                     domain.name,
                     evt.name,
                     if evt
@@ -299,6 +301,7 @@ pub mod {} {{
                             evt.name.to_capitalized()
                         )
                     },
+                    domain.name.to_snake(),
                     evt.mangled_name()
                 ));
             }
@@ -310,9 +313,7 @@ pub mod {} {{
         r#"
 {}
 {}
-#[cfg_attr(feature="server", derive(Serialize))]
-#[cfg_attr(feature="client", derive(Deserialize))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq{}{})]
 #[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
@@ -322,6 +323,16 @@ pub enum Event {{
         EVENTS,
         if cfg!(feature = "async") {
             ASYNC_EVENTS
+        } else {
+            ""
+        },
+        if cfg!(feature = "server") {
+            ", Serialize"
+        } else {
+            ""
+        },
+        if cfg!(feature = "client") {
+            ", Deserialize"
         } else {
             ""
         },
@@ -650,18 +661,20 @@ use crate::*;"#
                 Some(pdl::Item::Properties(ref props)) => {
                     write!(
                         f,
-                        "{}{}#[derive(Serialize, Deserialize)]\n{}",
+                        "{}{}{}",
                         if ty.experimental {
                             "#[cfg(feature = \"experimental\")]\n"
                         } else {
                             ""
                         },
                         if ty.deprecated { "#[deprecated]\n" } else { "" },
-                        Struct(ty.id.to_owned(), props, |name| has_default(
-                            domain,
-                            Some(ty.id),
-                            name
-                        ))
+                        Struct(
+                            ty.id.to_owned(),
+                            props,
+                            |name| has_default(domain, Some(ty.id), name),
+                            true,
+                            true
+                        )
                     )?;
                 }
                 None => {
@@ -713,31 +726,35 @@ use crate::*;"#
                 f,
                 r#"
 /// Request object of the `{}::{}` command.
-{}{}#[cfg_attr(feature="server", derive(Deserialize))]
-#[cfg_attr(feature="client", derive(Serialize))]
-{}"#,
+{}{}{}"#,
                 domain.name,
                 cmd.name,
                 experimental,
                 deprecated,
-                Struct(request, &cmd.parameters, |name| has_default(
-                    domain, None, name
-                ))
+                Struct(
+                    request,
+                    &cmd.parameters,
+                    |name| has_default(domain, None, name),
+                    cfg!(feature = "client"),
+                    cfg!(feature = "server")
+                )
             )?;
             write!(
                 f,
                 r#"
 /// Response object of the `{}::{}` command.
-{}{}#[cfg_attr(feature="server", derive(Serialize))]
-#[cfg_attr(feature="client", derive(Deserialize))]
-{}"#,
+{}{}{}"#,
                 domain.name,
                 cmd.name,
                 experimental,
                 deprecated,
-                Struct(response, &cmd.returns, |name| has_default(
-                    domain, None, name
-                ))
+                Struct(
+                    response,
+                    &cmd.returns,
+                    |name| has_default(domain, None, name),
+                    cfg!(feature = "server"),
+                    cfg!(feature = "client")
+                )
             )?;
             writeln!(
                 f,
@@ -783,15 +800,17 @@ use crate::*;"#
 
             writeln!(
                 f,
-                r#"{}{}{}#[cfg_attr(feature="server", derive(Serialize))]
-#[cfg_attr(feature="client", derive(Deserialize))]
-{}"#,
+                r#"{}{}{}{}"#,
                 Comments(&evt.description),
                 experimental,
                 deprecated,
-                Struct(mangled_name, &evt.parameters, |name| has_default(
-                    domain, None, name
-                ))
+                Struct(
+                    mangled_name,
+                    &evt.parameters,
+                    |name| has_default(domain, None, name),
+                    cfg!(feature = "server"),
+                    cfg!(feature = "client")
+                )
             )?;
         }
 
@@ -800,9 +819,7 @@ use crate::*;"#
                 f,
                 r#"{}
 {}
-#[cfg_attr(feature="server", derive(Serialize))]
-#[cfg_attr(feature="client", derive(Deserialize))]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq{}{})]
 #[serde(tag = "method", content = "params")]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {{
@@ -811,6 +828,16 @@ pub enum Event {{
                 EVENTS,
                 if cfg!(feature = "async") {
                     ASYNC_EVENTS
+                } else {
+                    ""
+                },
+                if cfg!(feature = "server") {
+                    ", Serialize"
+                } else {
+                    ""
+                },
+                if cfg!(feature = "client") {
+                    ", Deserialize"
                 } else {
                     ""
                 },
@@ -891,7 +918,7 @@ impl<'a> fmt::Display for Variant<'a> {
     }
 }
 
-struct Struct<'a, F>(String, &'a [pdl::Param<'a>], F);
+struct Struct<'a, F>(String, &'a [pdl::Param<'a>], F, bool, bool);
 
 impl<'a, F> fmt::Display for Struct<'a, F>
 where
@@ -901,10 +928,12 @@ where
         let name = &self.0;
         let params = self.1;
         let has_default = &self.2;
+        let has_serialize = self.3;
+        let has_deserialize = self.4;
 
         writeln!(
             f,
-            r#"#[derive(Clone, Debug{}, PartialEq)]
+            r#"#[derive(Clone, Debug{}, PartialEq{}{})]
 #[serde(rename_all = "camelCase")]
 pub struct {} {{"#,
             if params
@@ -915,6 +944,8 @@ pub struct {} {{"#,
             } else {
                 ""
             },
+            if has_serialize { ", Serialize" } else { "" },
+            if has_deserialize { ", Deserialize" } else { "" },
             name
         )?;
 

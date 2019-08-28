@@ -217,8 +217,14 @@ mod tests {
         )];
 
         for (msg, json) in test_cases {
-            assert_eq!(serde_json::to_string(&msg).unwrap(), json.to_string());
-            assert_eq!(serde_json::from_value::<Message>(json).unwrap(), msg);
+            #[cfg(feature = "server")]
+            {
+                assert_eq!(serde_json::to_string(&msg).unwrap(), json.to_string());
+            }
+            #[cfg(feature = "client")]
+            {
+                assert_eq!(serde_json::from_value::<Message>(json).unwrap(), msg);
+            }
         }
     }
 }

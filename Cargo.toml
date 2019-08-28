@@ -80,3 +80,11 @@ failure = "0.1"
 indented = "0.1"
 pdl = { version = "0.1", git = "https://github.com/flier/rust-pdl.git" }
 case = { version = "1.0", git = "https://github.com/flier/case.git", branch = "abbr" }
+
+[[example]]
+name = "print_to_pdf"
+required-features = ["client", "experimental", "browser", "page"]
+
+[[example]]
+name = "take_screenshot"
+required-features = ["client", "experimental", "async", "browser", "page"]

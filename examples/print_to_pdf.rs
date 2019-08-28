@@ -166,7 +166,7 @@ struct Session {
 }
 
 impl Session {
-    fn browser(&mut self) -> &mut Browser<Error = Error> {
+    fn browser(&mut self) -> &mut dyn Browser<Error = Error> {
         &mut self.endpoint
     }
 

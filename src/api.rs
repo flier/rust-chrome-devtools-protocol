@@ -1,4 +1,7 @@
+#[cfg(feature = "client")]
 use serde::Deserialize;
+#[cfg(feature = "server")]
+use serde::Serialize;
 
 #[cfg_attr(feature = "server", derive(Serialize))]
 #[cfg_attr(feature = "client", derive(Deserialize))]
